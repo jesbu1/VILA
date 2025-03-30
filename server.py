@@ -139,11 +139,11 @@ async def chat_completions(request: ChatCompletionRequest):
     try:
         global model, tokenizer, image_processor, context_len
 
-        if request.model != model_name:
-            raise ValueError(
-                f"The endpoint is configured to use the model {model_name}, "
-                f"but the request model is {request.model}"
-            )
+        #if request.model != model_name:
+        #    raise ValueError(
+        #        f"The endpoint is configured to use the model {model_name}, "
+        #        f"but the request model is {request.model}"
+        #    )
         max_tokens = request.max_tokens
         temperature = request.temperature
         top_p = request.top_p
