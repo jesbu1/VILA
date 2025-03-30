@@ -64,6 +64,7 @@ class ChatCompletionRequest(BaseModel):
         "VILA1.5-13B-AWQ",
         "VILA1.5-40B",
         "VILA1.5-40B-AWQ",
+        "HAMSTER-13B",
     ]
     messages: List[ChatMessage]
     max_tokens: Optional[int] = 512
