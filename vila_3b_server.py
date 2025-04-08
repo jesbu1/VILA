@@ -99,10 +99,10 @@ async def lifespan(app: FastAPI):
         model_name = get_model_name_from_path(model_path)
         tokenizer, model, image_processor, context_len = load_pretrained_model(model_path, model_name, None)
         if "mask" in model_path:
-            model_path_mask = model_path
+            model_path_mask = model
             model_name = PATH_MASK_MODEL_NAME
         else:
-            model_path_only = model_path
+            model_path_only = model
             model_name = PATH_MODEL_NAME
         print(f"Model {model_name} loaded successfully. Context length: {context_len}")
     yield
