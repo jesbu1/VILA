@@ -75,7 +75,7 @@ context_len = None
 VILA_MODELS = get_literal_values(ChatCompletionRequest, "model")
 
 
-def normalize_image_tags(qs: str) -> str:
+def normalize_image_tags(model, qs: str) -> str:
     image_token_se = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
     if IMAGE_PLACEHOLDER in qs:
         if model.config.mm_use_im_start_end:
@@ -159,7 +159,7 @@ async def chat_completions(request: ChatCompletionRequest):
                             images.append(image)
                             prompt += IMAGE_PLACEHOLDER
 
-                normalized_prompt = normalize_image_tags(prompt)
+                normalized_prompt = normalize_image_tags(model, prompt)
                 conv.append_message(user_role, normalized_prompt)
             if message.role == "assistant":
                 prompt = message.content
