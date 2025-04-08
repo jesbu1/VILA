@@ -98,7 +98,7 @@ async def lifespan(app: FastAPI):
     for model_path in app.args.model_paths:
         model_name = get_model_name_from_path(model_path)
         tokenizer, model, image_processor, context_len = load_pretrained_model(model_path, model_name, None)
-        if "mask" in model:
+        if "mask" in model_path:
             model_path_mask = model_path
             model_name = PATH_MASK_MODEL_NAME
         else:
