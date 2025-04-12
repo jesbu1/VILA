@@ -36,6 +36,7 @@ from server import ChatMessage, TextContent, ImageURL, ImageContent, get_literal
 IMAGE_CONTENT_BASE64_REGEX = re.compile(r"^data:image/(png|jpe?g);base64,(.*)$")
 PATH_MODEL_NAME = "vila_3b_oxe_no_droid"
 PATH_MASK_MODEL_NAME = "vila_3b_oxe_no_droid_path_mask"
+EVERYTHING_MODEL_NAME = "vila_3b_oxe_sim_jack_o"
 
 
 
@@ -53,7 +54,10 @@ class ChatCompletionRequest(BaseModel):
         "VILA1.5-40B-AWQ",
         "HAMSTER-13B",
         "vila_3b_oxe_no_droid",
-        "vila_3b_oxe_no_droid_path_mask"
+        "vila_3b_oxe_no_droid_path_mask",
+        "vila_3b_oxe_sim_path",
+        "vila_3b_oxe_sim_path_mask",
+        "vila_3b_oxe_sim_jack_o",
     ]
     messages: List[ChatMessage]
     max_tokens: Optional[int] = 512
@@ -90,7 +94,14 @@ def normalize_image_tags(model, qs: str) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global model_path_mask, model_path_only, tokenizer, image_processor, context_len
+    global \
+        model_path_mask, \
+        model_path_only, \
+        model_path_jack, \
+        tokenizer, \
+        image_processor, \
+        context_len
+
     disable_torch_init()
     
     if not app.args.model_paths:
@@ -98,7 +109,10 @@ async def lifespan(app: FastAPI):
     for model_path in app.args.model_paths:
         model_name = get_model_name_from_path(model_path)
         tokenizer, model, image_processor, context_len = load_pretrained_model(model_path, model_name, None)
-        if "mask" in model_path:
+        if "jack" in model_path:
+            model_path_jack = model
+            model_name = EVERYTHING_MODEL_NAME
+        elif "mask" in model_path:
             model_path_mask = model
             model_name = PATH_MASK_MODEL_NAME
         else:
@@ -117,14 +131,20 @@ async def chat_completions(request: ChatCompletionRequest):
     try:
         global model_path_mask, model_path_only, tokenizer, image_processor, context_len
 
-        if request.model != PATH_MASK_MODEL_NAME and request.model != PATH_MODEL_NAME:
+        if (
+            request.model != PATH_MASK_MODEL_NAME
+            and request.model != PATH_MODEL_NAME
+            and request.model != EVERYTHING_MODEL_NAME
+        ):
             raise ValueError(
-                f"The endpoint is configured to use the model {PATH_MASK_MODEL_NAME} or {PATH_MODEL_NAME}, "
+                f"The endpoint is configured to use the model {PATH_MASK_MODEL_NAME} or {PATH_MODEL_NAME} or {EVERYTHING_MODEL_NAME}, "
                 f"but the request model is {request.model}"
             )
         
         if request.model == PATH_MASK_MODEL_NAME:
             model = model_path_mask
+        elif request.model == EVERYTHING_MODEL_NAME:
+            model = model_path_jack
         else:
             model = model_path_only
             
