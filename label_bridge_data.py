@@ -250,6 +250,9 @@ def get_path_mask_from_vlm_direct(
                 if stop_str and output.endswith(stop_str):
                     output = output[: -len(stop_str)].strip()
 
+                breakpoint()
+                # TODO: Parse the output to extract path and mask coordinates
+
                 # Parse the output to extract path and mask coordinates
                 # This is a simplified parser - you may need to adapt based on your model's output format
                 path_coords = None
