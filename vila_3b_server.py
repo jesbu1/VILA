@@ -35,8 +35,8 @@ from server import ChatMessage, TextContent, ImageURL, ImageContent, get_literal
 
 IMAGE_CONTENT_BASE64_REGEX = re.compile(r"^data:image/(png|jpe?g);base64,(.*)$")
 PATH_MODEL_NAME = "vila_3b_oxe_sim_path"
-PATH_MASK_MODEL_NAME = "vila_3b_oxe_sim_path_mask"
-EVERYTHING_MODEL_NAME = "vila_3b_oxe_sim_jack_o"
+PATH_MASK_MODEL_NAME = "vila_3b_path_mask"
+# EVERYTHING_MODEL_NAME = "vila_3b_oxe_sim_jack_o"
 
 
 
