@@ -1,6 +1,28 @@
 """
 Script to generate paths and masks for Bridge data using direct VLM inference.
 This script should be run before convert_bridge_data_to_lerobot.py to prepare the path/mask data.
+
+Creates an h5 file with the following structure:
+
+episode_group
+    .attrs:
+        task_description: str
+        num_steps: uint16
+        has_paths: bool
+        has_masks: bool
+    paths: 2D array of shape (num_steps, max_path_length, 2) - each row is a path, each column is a point in the path. Contains padding.
+    path_lengths: 1D array of shape (num_steps) - length of each path
+    masks: 2D array of shape (num_steps, max_mask_length, 2) - each row is a mask, each column is a point in the mask. Contains padding.
+    mask_lengths: 1D array of shape (num_steps) - length of each mask
+    timesteps: 0-indexed, corresponds to the step index in the episode for each of the paths/masks
+
+
+
+pip install tensorflow-datasets
+pip install h5py
+pip install -e ~/vila_utils
+pip install shapely
+pip install tensorflow
 """
 
 import dataclasses
@@ -60,6 +82,7 @@ class Args:
     top_p: Optional[float] = 0.9
     max_new_tokens: int = 512
     num_beams: int = 1
+    vlm_call_frequency: int = 50  # Save every N timesteps
 
 
 def normalize_image_tags(model, qs: str) -> str:
@@ -189,7 +212,7 @@ def get_path_mask_from_vlm_direct(
                 )
                 keywords = [stop_str] if stop_str else []
                 stopping_criteria = (
-                    KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
+                    [KeywordsStoppingCriteria(keywords, tokenizer, input_ids)]
                     if keywords
                     else []
                 )
@@ -318,7 +341,7 @@ def get_path_mask_from_vlm_direct(
                 )
                 keywords = [stop_str] if stop_str else []
                 stopping_criteria = (
-                    KeywordsStoppingCriteria(keywords, tokenizer, batch_input_ids)
+                    [KeywordsStoppingCriteria(keywords, tokenizer, batch_input_ids)]
                     if keywords
                     else []
                 )
@@ -354,8 +377,6 @@ def get_path_mask_from_vlm_direct(
                         path, mask = parse_vlm_output(output, stop_str)
                         paths.append(path)
                         masks.append(mask)
-
-                # Note: All results (including skipped ones) are handled above via batch_results_map
 
             except Exception as e:
                 logging.error(f"Error during batched VLM inference: {e}")
@@ -396,19 +417,27 @@ def generate_paths_masks(args: Args) -> None:
         for episode_idx, episode in enumerate(
             tqdm.tqdm(raw_dataset, desc="Processing episodes")
         ):
-            # Create group for this episode
-            episode_group = f.create_group(f"episode_{episode_idx}")
-
-            # Get task description
-            task_description = episode["language_instruction"].decode()
-            episode_group.attrs["task_description"] = task_description
-
             # Collect all images and task descriptions for this episode
             episode_images = []
             episode_tasks = []
+            episode_timesteps = []
+
+            if not episode["episode_metadata"]["has_language"].numpy():
+                logging.warning(
+                    f"Episode {episode_idx} has no language instruction"
+                )
+                continue
+            
+            # Create group for this episode
+            episode_group = f.create_group(f"episode_{episode_idx}")
+
+
 
             # Process each step
-            for step in episode["steps"].as_numpy_iterator():
+            for i, step in enumerate(episode["steps"].as_numpy_iterator()):
+                if i % args.vlm_call_frequency != 0:
+                    continue
+
                 # Get image from first available camera
                 img = None
                 for cam in ["image_0", "image_1", "image_2", "image_3"]:
@@ -422,8 +451,13 @@ def generate_paths_masks(args: Args) -> None:
                     )
                     continue
 
+                task_description = step["language_instruction"].decode()
+
                 episode_images.append(img)
                 episode_tasks.append(task_description)
+                episode_timesteps.append(i)
+            # Get task description
+            episode_group.attrs["task_description"] = task_description
 
             if not episode_images:
                 logging.warning(f"No valid images found in episode {episode_idx}")
@@ -476,11 +510,13 @@ def generate_paths_masks(args: Args) -> None:
                         episode_group.create_dataset(
                             "mask_lengths", data=np.array(mask_lengths)
                         )
+                        episode_group.create_dataset("timesteps", data=np.array(episode_timesteps, dtype=np.uint16), dtype=np.uint16)
 
                 # Save some metadata
                 episode_group.attrs["num_steps"] = len(episode_images)
                 episode_group.attrs["has_paths"] = len(paths) > 0
                 episode_group.attrs["has_masks"] = len(masks) > 0
+                episode_group.attrs["task_description"] = task_description
 
             except Exception as e:
                 logging.error(f"Error processing episode {episode_idx}: {e}")
