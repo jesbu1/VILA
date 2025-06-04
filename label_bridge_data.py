@@ -17,6 +17,8 @@ import cv2
 from PIL import Image
 from typing import List, Tuple, Optional
 
+PROMPT_TYPE = "path_mask"
+
 from llava.constants import (
     DEFAULT_IM_END_TOKEN,
     DEFAULT_IM_START_TOKEN,
@@ -24,7 +26,7 @@ from llava.constants import (
     IMAGE_PLACEHOLDER,
     IMAGE_TOKEN_INDEX,
 )
-from llava.conversation import conv_templates
+from llava.conversation import SeparatorStyle, conv_templates
 from llava.mm_utils import (
     KeywordsStoppingCriteria,
     get_model_name_from_path,
@@ -33,6 +35,14 @@ from llava.mm_utils import (
 )
 from llava.model.builder import load_pretrained_model
 from llava.utils import disable_torch_init
+
+from vila_utils.utils.prompts import get_prompt
+from vila_utils.utils.decode import (
+    add_path_2d_to_img_alt_fast,
+    add_mask_2d_to_img,
+    get_path_from_answer,
+)
+from vila_utils.utils.encode import scale_path
 
 
 @dataclasses.dataclass
@@ -52,17 +62,6 @@ class Args:
     num_beams: int = 1
 
 
-def pad_sequence_to_max_length(seq, max_len, pad_token_id=0):
-    """Pad sequence to maximum length."""
-    if len(seq) >= max_len:
-        return seq[:max_len]
-    else:
-        padding = torch.full(
-            (max_len - len(seq),), pad_token_id, dtype=seq.dtype, device=seq.device
-        )
-        return torch.cat([seq, padding])
-
-
 def normalize_image_tags(model, qs: str) -> str:
     """Normalize image tags in the query string."""
     image_token_se = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
@@ -74,6 +73,30 @@ def normalize_image_tags(model, qs: str) -> str:
     return qs
 
 
+def parse_vlm_output(
+    output: str, stop_str: str = None
+) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """
+    Parse VLM output to extract path and mask coordinates.
+
+    Args:
+        output: Raw output from VLM
+        stop_str: Stop string to remove from output
+
+    Returns:
+        Tuple of (path_coords, mask_coords)
+    """
+    # Clean up output
+    output = output.strip()
+    if stop_str and output.endswith(stop_str):
+        output = output[: -len(stop_str)].strip()
+
+    # Extract path and mask using vila_utils
+    path, mask = get_path_from_answer(output, PROMPT_TYPE)
+
+    return path, mask
+
+
 def get_path_mask_from_vlm_direct(
     images: List[np.ndarray],
     task_descriptions: List[str],
@@ -82,7 +105,7 @@ def get_path_mask_from_vlm_direct(
     image_processor,
     conv_mode: str,
     args: Args,
-    device: str = "cuda",
+    device,
 ) -> Tuple[List[Optional[np.ndarray]], List[Optional[np.ndarray]]]:
     """
     Get path and mask predictions from VLM using direct inference.
@@ -118,166 +141,228 @@ def get_path_mask_from_vlm_direct(
         pil_image = Image.fromarray(rgb_img.astype(np.uint8))
         pil_images.append(pil_image)
 
-    # Process in batches
-    batch_size = min(args.batch_size, len(images))
+    # Choose processing method based on batch_size
+    if args.batch_size == 1:
+        # Process each image individually (more reliable for debugging)
+        for pil_img, task_desc in zip(pil_images, task_descriptions):
+            try:
+                # Create conversation template (following vila_3b_server.py pattern)
+                conv = conv_templates[conv_mode].copy()
+                user_role = conv.roles[0]
+                assistant_role = conv.roles[1]
 
-    for i in range(0, len(images), batch_size):
-        batch_images = pil_images[i : i + batch_size]
-        batch_tasks = task_descriptions[i : i + batch_size]
+                # Create query for path and mask prediction
+                query = get_prompt(task_desc, PROMPT_TYPE, prompt_eval=True)
 
-        # Prepare conversation templates and prompts
-        prompts = []
-        batch_images_for_processing = []
+                if query is None:
+                    paths.append(None)
+                    masks.append(None)
+                    continue
 
-        for j, (pil_img, task_desc) in enumerate(zip(batch_images, batch_tasks)):
-            # Create conversation template
-            conv = conv_templates[conv_mode].copy()
-            user_role = conv.roles[0]
-            assistant_role = conv.roles[1]
+                # Normalize image tags
+                normalized_query = normalize_image_tags(model, query)
 
-            # Create query for path and mask prediction
-            if args.draw_path and args.draw_mask:
-                query = f"Given the task: '{task_desc}', predict both the path and mask for this image. {IMAGE_PLACEHOLDER}"
-            elif args.draw_path:
-                query = f"Given the task: '{task_desc}', predict the path for this image. {IMAGE_PLACEHOLDER}"
-            elif args.draw_mask:
-                query = f"Given the task: '{task_desc}', predict the mask for this image. {IMAGE_PLACEHOLDER}"
-            else:
-                continue
+                # Add messages to conversation
+                conv.append_message(user_role, normalized_query)
+                conv.append_message(assistant_role, None)
 
-            # Process the message similar to vila_3b_server.py message handling
-            prompt = ""
-            images_for_this_query = []
+                # Get the full prompt
+                prompt_text = conv.get_prompt()
 
-            # Add the image and text content
-            prompt += query
-            images_for_this_query.append(pil_img)
+                # Process image
+                images_tensor = process_images(
+                    [pil_img], image_processor, model.config
+                ).to(device, dtype=torch.float16)
 
-            # Normalize image tags
-            normalized_prompt = normalize_image_tags(model, prompt)
+                # Tokenize prompt
+                input_ids = (
+                    tokenizer_image_token(
+                        prompt_text, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt"
+                    )
+                    .unsqueeze(0)
+                    .to(device)
+                )
 
-            # Add messages to conversation
-            conv.append_message(user_role, normalized_prompt)
-            conv.append_message(assistant_role, None)
+                # Set up stopping criteria (following vila_3b_server.py pattern)
+                stop_str = (
+                    conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
+                )
+                keywords = [stop_str] if stop_str else []
+                stopping_criteria = (
+                    KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
+                    if keywords
+                    else []
+                )
 
-            # Get the full prompt
-            prompt_text = conv.get_prompt()
-            prompts.append(prompt_text)
-            batch_images_for_processing.extend(images_for_this_query)
+                # Generate response
+                with torch.inference_mode():
+                    output_ids = model.generate(
+                        input_ids,
+                        images=[images_tensor],
+                        do_sample=True if args.temperature > 0 else False,
+                        temperature=args.temperature,
+                        top_p=args.top_p,
+                        num_beams=args.num_beams,
+                        max_new_tokens=args.max_new_tokens,
+                        use_cache=True,
+                        stopping_criteria=stopping_criteria
+                        if stopping_criteria
+                        else None,
+                    )
 
-        if not prompts:
-            # Add empty results for this batch
-            for _ in range(len(batch_images)):
+                # Decode output
+                output = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0]
+
+                path, mask = parse_vlm_output(output, stop_str)
+
+                paths.append(path)
+                masks.append(mask)
+
+            except Exception as e:
+                logging.error(f"Error during VLM inference: {e}")
                 paths.append(None)
                 masks.append(None)
-            continue
 
-        try:
-            # Process images
-            images_tensor = process_images(
-                batch_images_for_processing, image_processor, model.config
-            ).to(device, dtype=torch.float16)
+    else:
+        # Batched inference processing
+        batch_size = min(args.batch_size, len(images))
 
-            # For batched inference, we need to handle multiple images properly
-            if len(batch_images_for_processing) > 1:
-                # Split images tensor for each prompt
-                images_input = [
-                    images_tensor[j : j + 1]
-                    for j in range(len(batch_images_for_processing))
-                ]
-            else:
-                images_input = [images_tensor]
+        for i in range(0, len(images), batch_size):
+            batch_images = pil_images[i : i + batch_size]
+            batch_tasks = task_descriptions[i : i + batch_size]
 
-            # Tokenize prompts and pad to same length
-            batch_input_ids = [
-                tokenizer_image_token(
-                    prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt"
-                )
-                .squeeze(0)
-                .to(device)
-                for prompt in prompts
-            ]
+            try:
+                # Prepare prompts for batch
+                prompts = []
+                valid_images = []
+                batch_results_map = []  # Track which images have valid queries
 
-            if len(batch_input_ids) > 1:
-                # Batched inference - pad sequences
-                max_len = max([len(seq) for seq in batch_input_ids])
-                padded_input_ids = [
-                    pad_sequence_to_max_length(
-                        seq, max_len, tokenizer.pad_token_id or 0
+                for idx, (pil_img, task_desc) in enumerate(
+                    zip(batch_images, batch_tasks)
+                ):
+                    # Create conversation template
+                    conv = conv_templates[conv_mode].copy()
+                    user_role = conv.roles[0]
+                    assistant_role = conv.roles[1]
+
+                    # Create query for path and mask prediction
+                    query = get_prompt(task_desc, PROMPT_TYPE, prompt_eval=True)
+
+                    if query is None:
+                        batch_results_map.append(None)  # Mark as skipped
+                        continue
+
+                    # Normalize image tags and build conversation
+                    normalized_query = normalize_image_tags(model, query)
+                    conv.append_message(user_role, normalized_query)
+                    conv.append_message(assistant_role, None)
+
+                    prompt_text = conv.get_prompt()
+                    prompts.append(prompt_text)
+                    valid_images.append(pil_img)
+                    batch_results_map.append(
+                        len(valid_images) - 1
+                    )  # Map to index in results
+
+                if not prompts:
+                    # Add None results for this batch
+                    for _ in range(len(batch_images)):
+                        paths.append(None)
+                        masks.append(None)
+                    continue
+
+                # Process images for batch
+                images_tensor = process_images(
+                    valid_images, image_processor, model.config
+                ).to(device, dtype=torch.float16)
+
+                # Tokenize all prompts
+                batch_input_ids = [
+                    tokenizer_image_token(
+                        prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt"
                     )
-                    for seq in batch_input_ids
+                    .squeeze(0)
+                    .to(device)
+                    for prompt in prompts
                 ]
+
+                # Pad sequences to same length for batching
+                max_len = max([len(seq) for seq in batch_input_ids])
+                padded_input_ids = []
+                for seq in batch_input_ids:
+                    if len(seq) >= max_len:
+                        padded_seq = seq[:max_len]
+                    else:
+                        pad_token_id = (
+                            tokenizer.pad_token_id
+                            if tokenizer.pad_token_id is not None
+                            else 0
+                        )
+                        padding = torch.full(
+                            (max_len - len(seq),),
+                            pad_token_id,
+                            dtype=seq.dtype,
+                            device=seq.device,
+                        )
+                        padded_seq = torch.cat([seq, padding])
+                    padded_input_ids.append(padded_seq)
+
                 batch_input_ids = torch.stack(padded_input_ids)
 
-                # For batched inference, combine all images
-                combined_images_tensor = torch.cat(images_input, dim=0)
-                images_input_final = combined_images_tensor
-            else:
-                # Single inference
-                batch_input_ids = batch_input_ids[0].unsqueeze(0)
-                images_input_final = images_input[0]
-
-            # Set up stopping criteria
-            conv_temp = conv_templates[conv_mode].copy()
-            stop_str = conv_temp.sep if hasattr(conv_temp, "sep") else None
-            keywords = [stop_str] if stop_str else []
-            stopping_criteria = (
-                KeywordsStoppingCriteria(keywords, tokenizer, batch_input_ids)
-                if keywords
-                else []
-            )
-
-            # Generate responses
-            with torch.inference_mode():
-                output_ids = model.generate(
-                    batch_input_ids,
-                    images=images_input_final,
-                    do_sample=True if args.temperature > 0 else False,
-                    temperature=args.temperature,
-                    top_p=args.top_p,
-                    num_beams=args.num_beams,
-                    max_new_tokens=args.max_new_tokens,
-                    use_cache=True,
-                    stopping_criteria=stopping_criteria if stopping_criteria else None,
+                # Set up stopping criteria
+                conv_temp = conv_templates[conv_mode].copy()
+                stop_str = (
+                    conv_temp.sep
+                    if conv_temp.sep_style != SeparatorStyle.TWO
+                    else conv_temp.sep2
+                )
+                keywords = [stop_str] if stop_str else []
+                stopping_criteria = (
+                    KeywordsStoppingCriteria(keywords, tokenizer, batch_input_ids)
+                    if keywords
+                    else []
                 )
 
-            # Decode outputs
-            outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+                # Generate responses for batch
+                with torch.inference_mode():
+                    output_ids = model.generate(
+                        batch_input_ids,
+                        images=images_tensor,
+                        do_sample=True if args.temperature > 0 else False,
+                        temperature=args.temperature,
+                        top_p=args.top_p,
+                        num_beams=args.num_beams,
+                        max_new_tokens=args.max_new_tokens,
+                        use_cache=True,
+                        stopping_criteria=stopping_criteria
+                        if stopping_criteria
+                        else None,
+                    )
 
-            # Parse outputs to extract path and mask information
-            for output in outputs:
-                output = output.strip()
-                if stop_str and output.endswith(stop_str):
-                    output = output[: -len(stop_str)].strip()
+                # Decode outputs
+                outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
 
-                breakpoint()
-                # TODO: Parse the output to extract path and mask coordinates
+                # Process each output in the batch using the results map
+                for idx, result_idx in enumerate(batch_results_map):
+                    if result_idx is None:
+                        # This image was skipped (no valid query)
+                        paths.append(None)
+                        masks.append(None)
+                    else:
+                        # This image has a valid result
+                        output = outputs[result_idx]
+                        path, mask = parse_vlm_output(output, stop_str)
+                        paths.append(path)
+                        masks.append(mask)
 
-                # Parse the output to extract path and mask coordinates
-                # This is a simplified parser - you may need to adapt based on your model's output format
-                path_coords = None
-                mask_coords = None
+                # Note: All results (including skipped ones) are handled above via batch_results_map
 
-                # Example parsing (adapt based on your model's output format)
-                if "path:" in output.lower():
-                    # Extract path coordinates from output
-                    # This is a placeholder - implement based on your model's output format
-                    path_coords = np.array([])  # Replace with actual parsing
-
-                if "mask:" in output.lower():
-                    # Extract mask coordinates from output
-                    # This is a placeholder - implement based on your model's output format
-                    mask_coords = np.array([])  # Replace with actual parsing
-
-                paths.append(path_coords)
-                masks.append(mask_coords)
-
-        except Exception as e:
-            logging.error(f"Error during VLM inference: {e}")
-            # Add None results for this batch
-            for _ in range(len(batch_images)):
-                paths.append(None)
-                masks.append(None)
+            except Exception as e:
+                logging.error(f"Error during batched VLM inference: {e}")
+                # Add None results for this entire batch
+                for _ in range(len(batch_images)):
+                    paths.append(None)
+                    masks.append(None)
 
     return paths, masks
 
@@ -354,7 +439,7 @@ def generate_paths_masks(args: Args) -> None:
                     image_processor,
                     args.conv_mode,
                     args,
-                    str(device),
+                    device,
                 )
 
                 # Save paths and masks for this episode
@@ -394,8 +479,8 @@ def generate_paths_masks(args: Args) -> None:
 
                 # Save some metadata
                 episode_group.attrs["num_steps"] = len(episode_images)
-                episode_group.attrs["has_paths"] = args.draw_path
-                episode_group.attrs["has_masks"] = args.draw_mask
+                episode_group.attrs["has_paths"] = len(paths) > 0
+                episode_group.attrs["has_masks"] = len(masks) > 0
 
             except Exception as e:
                 logging.error(f"Error processing episode {episode_idx}: {e}")
