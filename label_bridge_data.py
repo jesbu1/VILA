@@ -86,16 +86,16 @@ class Args:
     data_dir: str  # Directory containing the Bridge dataset
     output_dir: str  # Directory to save the generated paths and masks
     model_path: str  # Path to the VLM model
-    resize_size: int = 224  # Size to resize images for VLM
+    resize_size: int = 224 # Size to resize images for VLM
     draw_path: bool = True  # Whether to generate paths
     draw_mask: bool = True  # Whether to generate masks
     flip_image_horizontally: bool = False  # Whether to flip images horizontally
     batch_size: int = 1  # Batch size for inference (1 for single, >1 for batched)
-    temperature: float = 0.0
+    temperature: float = 0.1
     top_p: Optional[float] = 0.95
     max_new_tokens: int = 512
     num_beams: int = 1
-    vlm_call_frequency: int = 50  # Save every N timesteps
+    vlm_call_frequency: int = 20  # Save every N timesteps
 
 
 def normalize_image_tags(model, qs: str) -> str:
@@ -139,7 +139,6 @@ def get_path_mask_from_vlm_direct(
     model,
     tokenizer,
     image_processor,
-    conv_mode: str,
     args: Args,
     device,
 ) -> Tuple[List[Optional[np.ndarray]], List[Optional[np.ndarray]]]:
@@ -152,7 +151,6 @@ def get_path_mask_from_vlm_direct(
         model: Loaded VLM model
         tokenizer: Model tokenizer
         image_processor: Image processor
-        conv_mode: Conversation mode
         args: Arguments containing inference parameters
         device: Device to run inference on
 
@@ -167,13 +165,13 @@ def get_path_mask_from_vlm_direct(
     for img in images:
         if args.flip_image_horizontally:
             img = img[:, ::-1]
-        # Convert to RGB if needed
-        if len(img.shape) == 3 and img.shape[2] == 3:
-            rgb_img = (
-                cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img.dtype == np.uint8 else img
-            )
-        else:
-            rgb_img = img
+        # Convert to RGB if needed -- old code, not needed as we're loading directly from the tfds
+        #if len(img.shape) == 3 and img.shape[2] == 3:
+        #    rgb_img = (
+        #        cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img.dtype == np.uint8 else img
+        #    )
+        #else:
+        rgb_img = img
         pil_image = Image.fromarray(rgb_img.astype(np.uint8))
         pil_images.append(pil_image)
 
@@ -181,83 +179,84 @@ def get_path_mask_from_vlm_direct(
     if args.batch_size == 1:
         # Process each image individually (more reliable for debugging)
         for pil_img, task_desc in zip(pil_images, task_descriptions):
-            try:
-                # Create conversation template (following vila_3b_server.py pattern)
-                conv = conv_templates[conv_mode].copy()
-                user_role = conv.roles[0]
-                assistant_role = conv.roles[1]
+            failed = True
+            while failed:
+                try:
+                    # Create conversation template (following vila_3b_server.py pattern)
+                    conv = conv_templates[CONV_MODE].copy()
+                    user_role = conv.roles[0]
 
-                # Create query for path and mask prediction
-                query = get_prompt(task_desc, PROMPT_TYPE, prompt_eval=True)
-                query = f"{IMAGE_PLACEHOLDER}{query}"
+                    # Create query for path and mask prediction
+                    query = get_prompt(task_desc, PROMPT_TYPE, prompt_eval=True)
+                    query = f"{IMAGE_PLACEHOLDER}{query}"
 
-                if query is None:
+                    if query is None:
+                        paths.append(None)
+                        masks.append(None)
+                        continue
+
+                    # Normalize image tags
+                    normalized_query = normalize_image_tags(model, query)
+
+                    # Add messages to conversation
+                    conv.append_message(user_role, normalized_query)
+
+                    # Get the full prompt
+                    prompt_text = conv.get_prompt()
+
+                    # Process image
+                    images_tensor = process_images(
+                        [pil_img], image_processor, model.config
+                    ).to(device, dtype=torch.float16)
+
+                    # Tokenize prompt
+                    input_ids = (
+                        tokenizer_image_token(
+                            prompt_text, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt"
+                        )
+                        .unsqueeze(0)
+                        .to(device)
+                    )
+
+                    # Set up stopping criteria (following vila_3b_server.py pattern)
+                    stop_str = (
+                        conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
+                    )
+                    keywords = [stop_str] if stop_str else []
+                    stopping_criteria = (
+                        [KeywordsStoppingCriteria(keywords, tokenizer, input_ids)]
+                        if keywords
+                        else []
+                    )
+
+                    # Generate response
+                    with torch.inference_mode():
+                        output_ids = model.generate(
+                            input_ids,
+                            images=[images_tensor],
+                            do_sample=True if args.temperature > 0 else False,
+                            temperature=args.temperature,
+                            top_p=args.top_p,
+                            num_beams=args.num_beams,
+                            max_new_tokens=args.max_new_tokens,
+                            use_cache=True,
+                            stopping_criteria=stopping_criteria
+                            if stopping_criteria
+                            else None,
+                        )
+
+                    # Decode output
+                    output = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0]
+                    path, mask = parse_vlm_output(output, stop_str)
+
+                    paths.append(path)
+                    masks.append(mask)
+                    failed = False
+
+                except Exception as e:
+                    logging.error(f"Error during VLM inference: {e}")
                     paths.append(None)
                     masks.append(None)
-                    continue
-
-                # Normalize image tags
-                normalized_query = normalize_image_tags(model, query)
-
-                # Add messages to conversation
-                conv.append_message(user_role, normalized_query)
-                #conv.append_message(assistant_role, None)
-
-                # Get the full prompt
-                prompt_text = conv.get_prompt()
-
-                # Process image
-                images_tensor = process_images(
-                    [pil_img], image_processor, model.config
-                ).to(device, dtype=torch.float16)
-
-                # Tokenize prompt
-                input_ids = (
-                    tokenizer_image_token(
-                        prompt_text, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt"
-                    )
-                    .unsqueeze(0)
-                    .to(device)
-                )
-
-                # Set up stopping criteria (following vila_3b_server.py pattern)
-                stop_str = (
-                    conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
-                )
-                keywords = [stop_str] if stop_str else []
-                stopping_criteria = (
-                    [KeywordsStoppingCriteria(keywords, tokenizer, input_ids)]
-                    if keywords
-                    else []
-                )
-
-                # Generate response
-                with torch.inference_mode():
-                    output_ids = model.generate(
-                        input_ids,
-                        images=[images_tensor],
-                        do_sample=True if args.temperature > 0 else False,
-                        temperature=args.temperature,
-                        top_p=args.top_p,
-                        num_beams=args.num_beams,
-                        max_new_tokens=args.max_new_tokens,
-                        use_cache=True,
-                        stopping_criteria=stopping_criteria
-                        if stopping_criteria
-                        else None,
-                    )
-
-                # Decode output
-                output = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0]
-                path, mask = parse_vlm_output(output, stop_str)
-
-                paths.append(path)
-                masks.append(mask)
-
-            except Exception as e:
-                logging.error(f"Error during VLM inference: {e}")
-                paths.append(None)
-                masks.append(None)
 
     else:
         # Batched inference processing
@@ -267,136 +266,135 @@ def get_path_mask_from_vlm_direct(
             batch_images = pil_images[i : i + batch_size]
             batch_tasks = task_descriptions[i : i + batch_size]
 
-            try:
-                # Prepare prompts for batch
-                prompts = []
-                valid_images = []
-                batch_results_map = []  # Track which images have valid queries
+            failed = True
+            while failed:
 
-                for idx, (pil_img, task_desc) in enumerate(
-                    zip(batch_images, batch_tasks)
-                ):
-                    # Create conversation template
-                    conv = conv_templates[conv_mode].copy()
-                    user_role = conv.roles[0]
-                    assistant_role = conv.roles[1]
+                try:
+                    # Prepare prompts for batch
+                    prompts = []
+                    valid_images = []
+                    batch_results_map = []  # Track which images have valid queries
 
-                    # Create query for path and mask prediction
-                    query = get_prompt(task_desc, PROMPT_TYPE, prompt_eval=True)
+                    for idx, (pil_img, task_desc) in enumerate(
+                        zip(batch_images, batch_tasks)
+                    ):
+                        # Create conversation template
+                        conv = conv_templates[CONV_MODE].copy()
+                        user_role = conv.roles[0]
 
-                    if query is None:
-                        batch_results_map.append(None)  # Mark as skipped
+                        # Create query for path and mask prediction
+                        query = get_prompt(task_desc, PROMPT_TYPE, prompt_eval=True)
+                        query = f"{IMAGE_PLACEHOLDER}{query}"
+
+                        if query is None:
+                            batch_results_map.append(None)  # Mark as skipped
+                            continue
+
+                        # Normalize image tags and build conversation
+                        normalized_query = normalize_image_tags(model, query)
+                        conv.append_message(user_role, normalized_query)
+
+                        prompt_text = conv.get_prompt()
+                        prompts.append(prompt_text)
+                        valid_images.append(pil_img)
+                        batch_results_map.append(
+                            len(valid_images) - 1
+                        )  # Map to index in results
+
+                    if not prompts:
+                        # Add None results for this batch
+                        for _ in range(len(batch_images)):
+                            paths.append(None)
+                            masks.append(None)
                         continue
 
-                    # Normalize image tags and build conversation
-                    normalized_query = normalize_image_tags(model, query)
-                    conv.append_message(user_role, normalized_query)
-                    conv.append_message(assistant_role, None)
+                    # Process images for batch
+                    images_tensor = process_images(
+                        valid_images, image_processor, model.config
+                    ).to(device, dtype=torch.float16)
 
-                    prompt_text = conv.get_prompt()
-                    prompts.append(prompt_text)
-                    valid_images.append(pil_img)
-                    batch_results_map.append(
-                        len(valid_images) - 1
-                    )  # Map to index in results
+                    # Tokenize all prompts
+                    batch_input_ids = [
+                        tokenizer_image_token(
+                            prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt"
+                        )
+                        .squeeze(0)
+                        .to(device)
+                        for prompt in prompts
+                    ]
 
-                if not prompts:
-                    # Add None results for this batch
-                    for _ in range(len(batch_images)):
-                        paths.append(None)
-                        masks.append(None)
-                    continue
+                    # Pad sequences to same length for batching
+                    max_len = max([len(seq) for seq in batch_input_ids])
+                    padded_input_ids = []
+                    for seq in batch_input_ids:
+                        if len(seq) >= max_len:
+                            padded_seq = seq[:max_len]
+                        else:
+                            pad_token_id = (
+                                tokenizer.pad_token_id
+                                if tokenizer.pad_token_id is not None
+                                else 0
+                            )
+                            padding = torch.full(
+                                (max_len - len(seq),),
+                                pad_token_id,
+                                dtype=seq.dtype,
+                                device=seq.device,
+                            )
+                            padded_seq = torch.cat([seq, padding])
+                        padded_input_ids.append(padded_seq)
 
-                # Process images for batch
-                images_tensor = process_images(
-                    valid_images, image_processor, model.config
-                ).to(device, dtype=torch.float16)
+                    batch_input_ids = torch.stack(padded_input_ids)
 
-                # Tokenize all prompts
-                batch_input_ids = [
-                    tokenizer_image_token(
-                        prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt"
+                    # Set up stopping criteria
+                    conv_temp = conv_templates[CONV_MODE].copy()
+                    stop_str = (
+                        conv_temp.sep
+                        if conv_temp.sep_style != SeparatorStyle.TWO
+                        else conv_temp.sep2
                     )
-                    .squeeze(0)
-                    .to(device)
-                    for prompt in prompts
-                ]
-
-                # Pad sequences to same length for batching
-                max_len = max([len(seq) for seq in batch_input_ids])
-                padded_input_ids = []
-                for seq in batch_input_ids:
-                    if len(seq) >= max_len:
-                        padded_seq = seq[:max_len]
-                    else:
-                        pad_token_id = (
-                            tokenizer.pad_token_id
-                            if tokenizer.pad_token_id is not None
-                            else 0
-                        )
-                        padding = torch.full(
-                            (max_len - len(seq),),
-                            pad_token_id,
-                            dtype=seq.dtype,
-                            device=seq.device,
-                        )
-                        padded_seq = torch.cat([seq, padding])
-                    padded_input_ids.append(padded_seq)
-
-                batch_input_ids = torch.stack(padded_input_ids)
-
-                # Set up stopping criteria
-                conv_temp = conv_templates[conv_mode].copy()
-                stop_str = (
-                    conv_temp.sep
-                    if conv_temp.sep_style != SeparatorStyle.TWO
-                    else conv_temp.sep2
-                )
-                keywords = [stop_str] if stop_str else []
-                stopping_criteria = (
-                    [KeywordsStoppingCriteria(keywords, tokenizer, batch_input_ids)]
-                    if keywords
-                    else []
-                )
-
-                # Generate responses for batch
-                with torch.inference_mode():
-                    output_ids = model.generate(
-                        batch_input_ids,
-                        images=images_tensor,
-                        do_sample=True if args.temperature > 0 else False,
-                        temperature=args.temperature,
-                        top_p=args.top_p,
-                        num_beams=args.num_beams,
-                        max_new_tokens=args.max_new_tokens,
-                        use_cache=True,
-                        stopping_criteria=stopping_criteria
-                        if stopping_criteria
-                        else None,
+                    keywords = [stop_str] if stop_str else []
+                    stopping_criteria = (
+                        [KeywordsStoppingCriteria(keywords, tokenizer, batch_input_ids)]
+                        if keywords
+                        else []
                     )
 
-                # Decode outputs
-                outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+                    # Generate responses for batch
+                    with torch.inference_mode():
+                        output_ids = model.generate(
+                            batch_input_ids,
+                            images=images_tensor,
+                            do_sample=True if args.temperature > 0 else False,
+                            temperature=args.temperature,
+                            top_p=args.top_p,
+                            num_beams=args.num_beams,
+                            max_new_tokens=args.max_new_tokens,
+                            use_cache=True,
+                            stopping_criteria=stopping_criteria
+                            if stopping_criteria
+                            else None,
+                        )
 
-                # Process each output in the batch using the results map
-                for idx, result_idx in enumerate(batch_results_map):
-                    if result_idx is None:
-                        # This image was skipped (no valid query)
-                        paths.append(None)
-                        masks.append(None)
-                    else:
-                        # This image has a valid result
-                        output = outputs[result_idx]
-                        path, mask = parse_vlm_output(output, stop_str)
-                        paths.append(path)
-                        masks.append(mask)
+                    # Decode outputs
+                    outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
 
-            except Exception as e:
-                logging.error(f"Error during batched VLM inference: {e}")
-                # Add None results for this entire batch
-                for _ in range(len(batch_images)):
-                    paths.append(None)
-                    masks.append(None)
+                    # Process each output in the batch using the results map
+                    for idx, result_idx in enumerate(batch_results_map):
+                        if result_idx is None:
+                            # This image was skipped (no valid query)
+                            paths.append(None)
+                            masks.append(None)
+                        else:
+                            # This image has a valid result
+                            output = outputs[result_idx]
+                            path, mask = parse_vlm_output(output, stop_str)
+                            paths.append(path)
+                            masks.append(mask)
+                    failed = False
+
+                except Exception as e:
+                    logging.error(f"Error during batched VLM inference: {e}, retrying.... Outputs: {outputs}")
 
     return paths, masks
 
@@ -488,99 +486,98 @@ def generate_paths_masks(args: Args) -> None:
                 continue
 
             # Get paths and masks using direct VLM inference
-            try:
-                paths, masks = get_path_mask_from_vlm_direct(
-                    episode_images,
-                    episode_tasks,
-                    model,
-                    tokenizer,
-                    image_processor,
-                    CONV_MODE,
-                    args,
-                    device,
-                )
+            #try:
+            paths, masks = get_path_mask_from_vlm_direct(
+                episode_images,
+                episode_tasks,
+                model,
+                tokenizer,
+                image_processor,
+                args,
+                device,
+            )
 
-                # Save paths and masks for this episode
-                if args.draw_path and paths:
-                    # Group paths by camera
-                    camera_paths = {}
-                    camera_path_timesteps = {}
-                    
-                    for i, (path, camera, timestep) in enumerate(zip(paths, episode_cameras, episode_timesteps)):
-                        if camera not in camera_paths:
-                            camera_paths[camera] = []
-                            camera_path_timesteps[camera] = []
-                        camera_paths[camera].append(path)
-                        camera_path_timesteps[camera].append(timestep)
-                    
-                    # Save separate datasets for each camera
-                    for camera in camera_paths:
-                        cam_paths = camera_paths[camera]
-                        valid_paths = [p for p in cam_paths if p is not None and len(p) > 0]
-                        
-                        if valid_paths:
-                            max_path_len = max(len(p) for p in valid_paths)
-                            padded_paths = np.zeros((len(cam_paths), max_path_len, 2))
-                            path_lengths = []
-                            
-                            for i, p in enumerate(cam_paths):
-                                if p is not None and len(p) > 0:
-                                    padded_paths[i, : len(p)] = p
-                                    path_lengths.append(len(p))
-                                else:
-                                    path_lengths.append(0)
-                            
-                            episode_group.create_dataset(f"{camera}_paths", data=padded_paths)
-                            episode_group.create_dataset(f"{camera}_path_lengths", data=np.array(path_lengths))
-                            episode_group.create_dataset(f"{camera}_path_timesteps", data=np.array(camera_path_timesteps[camera], dtype=np.uint16))
-
-                if args.draw_mask and masks:
-                    # Group masks by camera
-                    camera_masks = {}
-                    camera_mask_timesteps = {}
-                    
-                    for i, (mask, camera, timestep) in enumerate(zip(masks, episode_cameras, episode_timesteps)):
-                        if camera not in camera_masks:
-                            camera_masks[camera] = []
-                            camera_mask_timesteps[camera] = []
-                        camera_masks[camera].append(mask)
-                        camera_mask_timesteps[camera].append(timestep)
-                    
-                    # Save separate datasets for each camera
-                    for camera in camera_masks:
-                        cam_masks = camera_masks[camera]
-                        valid_masks = [m for m in cam_masks if m is not None and len(m) > 0]
-                        
-                        if valid_masks:
-                            max_mask_len = max(len(m) for m in valid_masks)
-                            padded_masks = np.zeros((len(cam_masks), max_mask_len, 2))
-                            mask_lengths = []
-                            
-                            for i, m in enumerate(cam_masks):
-                                if m is not None and len(m) > 0:
-                                    padded_masks[i, : len(m)] = m
-                                    mask_lengths.append(len(m))
-                                else:
-                                    mask_lengths.append(0)
-                            
-                            episode_group.create_dataset(f"{camera}_masks", data=padded_masks)
-                            episode_group.create_dataset(f"{camera}_mask_lengths", data=np.array(mask_lengths))
-                            episode_group.create_dataset(f"{camera}_mask_timesteps", data=np.array(camera_mask_timesteps[camera], dtype=np.uint16))
-
-                # Save some metadata
-                episode_group.attrs["num_steps"] = len(episode_images)
-                episode_group.attrs["has_paths"] = len(paths) > 0
-                episode_group.attrs["has_masks"] = len(masks) > 0
-                episode_group.attrs["task_description"] = episode_tasks[0] if episode_tasks else ""
+            # Save paths and masks for this episode
+            if args.draw_path and paths:
+                # Group paths by camera
+                camera_paths = {}
+                camera_path_timesteps = {}
                 
-                # Track which cameras have data
-                unique_cameras = list(set(episode_cameras))
-                episode_group.attrs["cameras_with_data"] = [cam.encode('utf-8') for cam in unique_cameras]
-                episode_group.attrs["total_images"] = len(episode_images)
+                for i, (path, camera, timestep) in enumerate(zip(paths, episode_cameras, episode_timesteps)):
+                    if camera not in camera_paths:
+                        camera_paths[camera] = []
+                        camera_path_timesteps[camera] = []
+                    camera_paths[camera].append(path)
+                    camera_path_timesteps[camera].append(timestep)
+                
+                # Save separate datasets for each camera
+                for camera in camera_paths:
+                    cam_paths = camera_paths[camera]
+                    valid_paths = [p for p in cam_paths if p is not None and len(p) > 0]
+                    
+                    if valid_paths:
+                        max_path_len = max(len(p) for p in valid_paths)
+                        padded_paths = np.zeros((len(cam_paths), max_path_len, 2))
+                        path_lengths = []
+                        
+                        for i, p in enumerate(cam_paths):
+                            if p is not None and len(p) > 0:
+                                padded_paths[i, : len(p)] = p
+                                path_lengths.append(len(p))
+                            else:
+                                path_lengths.append(0)
+                        
+                        episode_group.create_dataset(f"{camera}_paths", data=padded_paths)
+                        episode_group.create_dataset(f"{camera}_path_lengths", data=np.array(path_lengths))
+                        episode_group.create_dataset(f"{camera}_path_timesteps", data=np.array(camera_path_timesteps[camera], dtype=np.uint16))
 
-            except Exception as e:
-                logging.error(f"Error processing episode {episode_idx}: {e}")
-                continue
+            if args.draw_mask and masks:
+                # Group masks by camera
+                camera_masks = {}
+                camera_mask_timesteps = {}
+                
+                for i, (mask, camera, timestep) in enumerate(zip(masks, episode_cameras, episode_timesteps)):
+                    if camera not in camera_masks:
+                        camera_masks[camera] = []
+                        camera_mask_timesteps[camera] = []
+                    camera_masks[camera].append(mask)
+                    camera_mask_timesteps[camera].append(timestep)
+                
+                # Save separate datasets for each camera
+                for camera in camera_masks:
+                    cam_masks = camera_masks[camera]
+                    valid_masks = [m for m in cam_masks if m is not None and len(m) > 0]
+                    
+                    if valid_masks:
+                        max_mask_len = max(len(m) for m in valid_masks)
+                        padded_masks = np.zeros((len(cam_masks), max_mask_len, 2))
+                        mask_lengths = []
+                        
+                        for i, m in enumerate(cam_masks):
+                            if m is not None and len(m) > 0:
+                                padded_masks[i, : len(m)] = m
+                                mask_lengths.append(len(m))
+                            else:
+                                mask_lengths.append(0)
+                        
+                        episode_group.create_dataset(f"{camera}_masks", data=padded_masks)
+                        episode_group.create_dataset(f"{camera}_mask_lengths", data=np.array(mask_lengths))
+                        episode_group.create_dataset(f"{camera}_mask_timesteps", data=np.array(camera_mask_timesteps[camera], dtype=np.uint16))
+
+            # Save some metadata
+            episode_group.attrs["num_steps"] = len(episode_images)
+            episode_group.attrs["has_paths"] = len(paths) > 0
+            episode_group.attrs["has_masks"] = len(masks) > 0
+            episode_group.attrs["task_description"] = episode_tasks[0] if episode_tasks else ""
+            
+            # Track which cameras have data
+            unique_cameras = list(set(episode_cameras))
+            episode_group.attrs["cameras_with_data"] = [cam.encode('utf-8') for cam in unique_cameras]
+            episode_group.attrs["total_images"] = len(episode_images)
+
+            #except Exception as e:
+            #    logging.error(f"Error processing episode {episode_idx}: {e}")
+            #    continue
 
     logging.info(f"Generated paths and masks saved to {h5_path}")
 
