@@ -79,21 +79,20 @@ from vila_utils.utils.decode import (
     get_path_from_answer,
 )
 from vila_utils.utils.encode import scale_path
-
+CONV_MODE = "vicuna_v1"
 
 @dataclasses.dataclass
 class Args:
     data_dir: str  # Directory containing the Bridge dataset
     output_dir: str  # Directory to save the generated paths and masks
     model_path: str  # Path to the VLM model
-    conv_mode: str = "vicuna_v1"  # Conversation mode for VLM
     resize_size: int = 224  # Size to resize images for VLM
     draw_path: bool = True  # Whether to generate paths
     draw_mask: bool = True  # Whether to generate masks
     flip_image_horizontally: bool = False  # Whether to flip images horizontally
     batch_size: int = 1  # Batch size for inference (1 for single, >1 for batched)
-    temperature: float = 0.2
-    top_p: Optional[float] = 0.9
+    temperature: float = 0.0
+    top_p: Optional[float] = 0.95
     max_new_tokens: int = 512
     num_beams: int = 1
     vlm_call_frequency: int = 50  # Save every N timesteps
@@ -190,6 +189,7 @@ def get_path_mask_from_vlm_direct(
 
                 # Create query for path and mask prediction
                 query = get_prompt(task_desc, PROMPT_TYPE, prompt_eval=True)
+                query = f"{IMAGE_PLACEHOLDER}{query}"
 
                 if query is None:
                     paths.append(None)
@@ -201,7 +201,7 @@ def get_path_mask_from_vlm_direct(
 
                 # Add messages to conversation
                 conv.append_message(user_role, normalized_query)
-                conv.append_message(assistant_role, None)
+                #conv.append_message(assistant_role, None)
 
                 # Get the full prompt
                 prompt_text = conv.get_prompt()
@@ -249,7 +249,6 @@ def get_path_mask_from_vlm_direct(
 
                 # Decode output
                 output = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0]
-
                 path, mask = parse_vlm_output(output, stop_str)
 
                 paths.append(path)
@@ -496,7 +495,7 @@ def generate_paths_masks(args: Args) -> None:
                     model,
                     tokenizer,
                     image_processor,
-                    args.conv_mode,
+                    CONV_MODE,
                     args,
                     device,
                 )
