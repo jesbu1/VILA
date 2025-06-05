@@ -180,7 +180,8 @@ def get_path_mask_from_vlm_direct(
         # Process each image individually (more reliable for debugging)
         for pil_img, task_desc in zip(pil_images, task_descriptions):
             failed = True
-            while failed:
+            failure_count = 0
+            while failed and failure_count < 5:
                 try:
                     # Create conversation template (following vila_3b_server.py pattern)
                     conv = conv_templates[CONV_MODE].copy()
@@ -254,6 +255,7 @@ def get_path_mask_from_vlm_direct(
                     failed = False
 
                 except Exception as e:
+                    failure_count += 1
                     logging.error(f"Error during VLM inference: {e}")
                     paths.append(None)
                     masks.append(None)
@@ -267,7 +269,8 @@ def get_path_mask_from_vlm_direct(
             batch_tasks = task_descriptions[i : i + batch_size]
 
             failed = True
-            while failed:
+            failure_count = 0
+            while failed and failure_count < 5:
 
                 try:
                     # Prepare prompts for batch
@@ -394,7 +397,10 @@ def get_path_mask_from_vlm_direct(
                     failed = False
 
                 except Exception as e:
+                    failure_count += 1
                     logging.error(f"Error during batched VLM inference: {e}, retrying.... Outputs: {outputs}")
+                    if failure_count >= 5:
+                        raise e
 
     return paths, masks
 
@@ -423,11 +429,26 @@ def generate_paths_masks(args: Args) -> None:
 
     # Create HDF5 file to store paths and masks
     h5_path = output_path / "bridge_paths_masks.h5"
-    with h5py.File(h5_path, "w") as f:
-        # Process each episode
+    with h5py.File(h5_path, "a") as f:
+        # Process each episode. Resume by going to the second from last episode.
+        already_saved_episodes = sorted([int(k.split("_")[-1]) for k in f.keys()])
+        last_episode = already_saved_episodes[-1]
         for episode_idx, episode in enumerate(
             tqdm.tqdm(raw_dataset, desc="Processing episodes")
         ):
+            # Skip episodes that have already been saved
+            if episode_idx < last_episode:
+                continue
+            # Delete the last episode if it exists, as it might be incomplete
+            elif episode_idx == last_episode:
+                logging.info(f"Deleting episode {episode_idx} as it is incomplete")
+                try:
+                    del f[f"episode_{episode_idx}"]
+                except KeyError as e:
+                    logging.info(f"Episode {episode_idx} not found, skipping its deletion: {e}")
+                    breakpoint()
+                    continue
+
             # Collect all images and task descriptions for this episode
             episode_images = []
             episode_tasks = []
@@ -486,98 +507,99 @@ def generate_paths_masks(args: Args) -> None:
                 continue
 
             # Get paths and masks using direct VLM inference
-            #try:
-            paths, masks = get_path_mask_from_vlm_direct(
-                episode_images,
-                episode_tasks,
-                model,
-                tokenizer,
-                image_processor,
-                args,
-                device,
-            )
+            try:
+                paths, masks = get_path_mask_from_vlm_direct(
+                    episode_images,
+                    episode_tasks,
+                    model,
+                    tokenizer,
+                    image_processor,
+                    args,
+                    device,
+                )
 
-            # Save paths and masks for this episode
-            if args.draw_path and paths:
-                # Group paths by camera
-                camera_paths = {}
-                camera_path_timesteps = {}
-                
-                for i, (path, camera, timestep) in enumerate(zip(paths, episode_cameras, episode_timesteps)):
-                    if camera not in camera_paths:
-                        camera_paths[camera] = []
-                        camera_path_timesteps[camera] = []
-                    camera_paths[camera].append(path)
-                    camera_path_timesteps[camera].append(timestep)
-                
-                # Save separate datasets for each camera
-                for camera in camera_paths:
-                    cam_paths = camera_paths[camera]
-                    valid_paths = [p for p in cam_paths if p is not None and len(p) > 0]
+                # Save paths and masks for this episode
+                if args.draw_path and paths:
+                    # Group paths by camera
+                    camera_paths = {}
+                    camera_path_timesteps = {}
                     
-                    if valid_paths:
-                        max_path_len = max(len(p) for p in valid_paths)
-                        padded_paths = np.zeros((len(cam_paths), max_path_len, 2))
-                        path_lengths = []
-                        
-                        for i, p in enumerate(cam_paths):
-                            if p is not None and len(p) > 0:
-                                padded_paths[i, : len(p)] = p
-                                path_lengths.append(len(p))
-                            else:
-                                path_lengths.append(0)
-                        
-                        episode_group.create_dataset(f"{camera}_paths", data=padded_paths)
-                        episode_group.create_dataset(f"{camera}_path_lengths", data=np.array(path_lengths))
-                        episode_group.create_dataset(f"{camera}_path_timesteps", data=np.array(camera_path_timesteps[camera], dtype=np.uint16))
-
-            if args.draw_mask and masks:
-                # Group masks by camera
-                camera_masks = {}
-                camera_mask_timesteps = {}
-                
-                for i, (mask, camera, timestep) in enumerate(zip(masks, episode_cameras, episode_timesteps)):
-                    if camera not in camera_masks:
-                        camera_masks[camera] = []
-                        camera_mask_timesteps[camera] = []
-                    camera_masks[camera].append(mask)
-                    camera_mask_timesteps[camera].append(timestep)
-                
-                # Save separate datasets for each camera
-                for camera in camera_masks:
-                    cam_masks = camera_masks[camera]
-                    valid_masks = [m for m in cam_masks if m is not None and len(m) > 0]
+                    for i, (path, camera, timestep) in enumerate(zip(paths, episode_cameras, episode_timesteps)):
+                        if camera not in camera_paths:
+                            camera_paths[camera] = []
+                            camera_path_timesteps[camera] = []
+                        camera_paths[camera].append(path)
+                        camera_path_timesteps[camera].append(timestep)
                     
-                    if valid_masks:
-                        max_mask_len = max(len(m) for m in valid_masks)
-                        padded_masks = np.zeros((len(cam_masks), max_mask_len, 2))
-                        mask_lengths = []
+                    # Save separate datasets for each camera
+                    for camera in camera_paths:
+                        cam_paths = camera_paths[camera]
+                        valid_paths = [p for p in cam_paths if p is not None and len(p) > 0]
                         
-                        for i, m in enumerate(cam_masks):
-                            if m is not None and len(m) > 0:
-                                padded_masks[i, : len(m)] = m
-                                mask_lengths.append(len(m))
-                            else:
-                                mask_lengths.append(0)
+                        if valid_paths:
+                            max_path_len = max(len(p) for p in valid_paths)
+                            padded_paths = np.zeros((len(cam_paths), max_path_len, 2))
+                            path_lengths = []
+                            
+                            for i, p in enumerate(cam_paths):
+                                if p is not None and len(p) > 0:
+                                    padded_paths[i, : len(p)] = p
+                                    path_lengths.append(len(p))
+                                else:
+                                    path_lengths.append(0)
+                            
+                            episode_group.create_dataset(f"{camera}_paths", data=padded_paths)
+                            episode_group.create_dataset(f"{camera}_path_lengths", data=np.array(path_lengths))
+                            episode_group.create_dataset(f"{camera}_path_timesteps", data=np.array(camera_path_timesteps[camera], dtype=np.uint16))
+
+                if args.draw_mask and masks:
+                    # Group masks by camera
+                    camera_masks = {}
+                    camera_mask_timesteps = {}
+                    
+                    for i, (mask, camera, timestep) in enumerate(zip(masks, episode_cameras, episode_timesteps)):
+                        if camera not in camera_masks:
+                            camera_masks[camera] = []
+                            camera_mask_timesteps[camera] = []
+                        camera_masks[camera].append(mask)
+                        camera_mask_timesteps[camera].append(timestep)
+                    
+                    # Save separate datasets for each camera
+                    for camera in camera_masks:
+                        cam_masks = camera_masks[camera]
+                        valid_masks = [m for m in cam_masks if m is not None and len(m) > 0]
                         
-                        episode_group.create_dataset(f"{camera}_masks", data=padded_masks)
-                        episode_group.create_dataset(f"{camera}_mask_lengths", data=np.array(mask_lengths))
-                        episode_group.create_dataset(f"{camera}_mask_timesteps", data=np.array(camera_mask_timesteps[camera], dtype=np.uint16))
+                        if valid_masks:
+                            max_mask_len = max(len(m) for m in valid_masks)
+                            padded_masks = np.zeros((len(cam_masks), max_mask_len, 2))
+                            mask_lengths = []
+                            
+                            for i, m in enumerate(cam_masks):
+                                if m is not None and len(m) > 0:
+                                    padded_masks[i, : len(m)] = m
+                                    mask_lengths.append(len(m))
+                                else:
+                                    mask_lengths.append(0)
+                            
+                            episode_group.create_dataset(f"{camera}_masks", data=padded_masks)
+                            episode_group.create_dataset(f"{camera}_mask_lengths", data=np.array(mask_lengths))
+                            episode_group.create_dataset(f"{camera}_mask_timesteps", data=np.array(camera_mask_timesteps[camera], dtype=np.uint16))
 
-            # Save some metadata
-            episode_group.attrs["num_steps"] = len(episode_images)
-            episode_group.attrs["has_paths"] = len(paths) > 0
-            episode_group.attrs["has_masks"] = len(masks) > 0
-            episode_group.attrs["task_description"] = episode_tasks[0] if episode_tasks else ""
-            
-            # Track which cameras have data
-            unique_cameras = list(set(episode_cameras))
-            episode_group.attrs["cameras_with_data"] = [cam.encode('utf-8') for cam in unique_cameras]
-            episode_group.attrs["total_images"] = len(episode_images)
+                # Save some metadata
+                episode_group.attrs["num_steps"] = len(episode_images)
+                episode_group.attrs["has_paths"] = len(paths) > 0
+                episode_group.attrs["has_masks"] = len(masks) > 0
+                episode_group.attrs["task_description"] = episode_tasks[0] if episode_tasks else ""
+                
+                # Track which cameras have data
+                unique_cameras = list(set(episode_cameras))
+                episode_group.attrs["cameras_with_data"] = [cam.encode('utf-8') for cam in unique_cameras]
+                episode_group.attrs["total_images"] = len(episode_images)
 
-            #except Exception as e:
-            #    logging.error(f"Error processing episode {episode_idx}: {e}")
-            #    continue
+            except Exception as e:
+                logging.error(f"Error processing episode {episode_idx}: {e}")
+                del f[f"episode_{episode_idx}"]
+                continue
 
     logging.info(f"Generated paths and masks saved to {h5_path}")
 
