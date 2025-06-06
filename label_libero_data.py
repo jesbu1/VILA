@@ -33,7 +33,7 @@ pip install tensorflow
 
 
 CUDA_VISIBLE_DEVICES=1 python label_libero_data.py \
-    --args.data-dir=/data/shared/openx_rlds_data/ \
+    --args.data-dir=/home/jessez/.cache/huggingface/hub/datasets--jesbu1--libero_90_rlds/snapshots/93169e35e1e6ddf6c43171bf038cb4971b60e72a/ \
     --args.output-dir=./test_libero_labeling \
     --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask/snapshots/943d8524c570c424043b17f9c623c9c37648cec3/checkpoint-6600/ \
     --args.batch-size=16
