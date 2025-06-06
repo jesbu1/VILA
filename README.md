@@ -1,3 +1,28 @@
+# vila_utils
+
+## Instructions for Jesse (for easy use)
+
+### Server Setup
+
+Use the following vila repo: 
+https://github.com/jesbu1/VILA/tree/hamster
+
+MAKE SURE IT's the hamster branch!
+
+```bash
+# just the one relevant model
+#huggingface-cli download memmelma/vila_3b_oxe_sim_path_mask
+huggingface-cli download memmelma/vila_3b_path_mask
+CUDA_VISIBLE_DEVICES=0 python -W ignore vila_3b_server.py --model-paths ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask/snapshots/943d8524c570c424043b17f9c623c9c37648cec3/checkpoint-6600/ 
+# all models 
+#CUDA_VISIBLE_DEVICES=0 python -W ignore vila_3b_server.py --model-paths ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask/snapshots/3d08e92de1cd7517b1acbf72648ce3bbf48c19ae/checkpoint-5700
+# CUDA_VISIBLE_DEVICES=0 python -W ignore vila_3b_server.py --model-paths /data/jessez/huggingface_cache/hub/models--memmelma--vila_3b_oxe_sim_path/snapshots/bb6d0d1c3201f26caad76c304eed81ec60d6ad53/checkpoint-5700/ /data/jessez/huggingface_cache/hub/models--memmelma--vila_3b_oxe_sim_path_mask/snapshots/3d08e92de1cd7517b1acbf72648ce3bbf48c19ae/checkpoint-5700/ /data/jessez/huggingface_cache/hub/models--memmelma--vila_3b_oxe_sim_jack_o/snapshots/d0f7c05cc9d9b7b6b57cba5bb0dc17758e72d1f3/checkpoint-8700
+
+# old models: CUDA_VISIBLE_DEVICES=0 python -W ignore vila_3b_server.py --model-paths /data/jessez/huggingface_cache/hub/models--memmelma--vila_3b_oxe_no_droid_path_mask/snapshots/199e313782607987e598b7b45a91005894685feb/checkpoint-3600/  /data/jessez/huggingface_cache/hub/models--memmelma--vila_3b_oxe_no_droid/snapshots/bb999b6a108793c7ad008bfd1655db450502401c/checkpoint-3600
+# tmux window 2
+ngrok http 8000 --url=whippet-pet-singularly.ngrok.app
+```
+
 <p align="center">
   <img src="demo_images/vila-logo.jpg" width="20%"/>
 </p>
