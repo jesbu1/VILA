@@ -32,7 +32,7 @@ pip install shapely
 pip install tensorflow
 
 
-CUDA_VISIBLE_DEVICES=1 python label_bridge_data.py \
+CUDA_VISIBLE_DEVICES=0 python label_bridge_data.py \
     --args.data-dir=/data/shared/openx_rlds_data/ \
     --args.output-dir=./test_bridge_labeling_5x \
     --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_5x/snapshots/64337ea6c5a7f086cd9aaf475b2469cabe10da8d/checkpoint-11900/ \
