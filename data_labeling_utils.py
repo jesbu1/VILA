@@ -1,4 +1,5 @@
 import torch
+import logging
 import numpy as np
 import cv2
 CONV_MODE = "vicuna_v1"
