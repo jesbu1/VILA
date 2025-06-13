@@ -34,8 +34,8 @@ pip install tensorflow
 
 CUDA_VISIBLE_DEVICES=1 python label_bridge_data.py \
     --args.data-dir=/data/shared/openx_rlds_data/ \
-    --args.output-dir=./test_bridge_labelin \
-    --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask/snapshots/943d8524c570c424043b17f9c623c9c37648cec3/checkpoint-6600/ \
+    --args.output-dir=./test_bridge_labeling_5x \
+    --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_5x/snapshots/64337ea6c5a7f086cd9aaf475b2469cabe10da8d/checkpoint-11900/ \
     --args.batch-size=16
 """
 
