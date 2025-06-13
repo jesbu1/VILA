@@ -34,8 +34,8 @@ pip install tensorflow
 
 CUDA_VISIBLE_DEVICES=1 python label_libero_data.py \
     --args.data-dir=/home/jessez/.cache/huggingface/hub/datasets--jesbu1--libero_90_rlds/snapshots/93169e35e1e6ddf6c43171bf038cb4971b60e72a/ \
-    --args.output-dir=./test_libero_labeling \
-    --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask/snapshots/943d8524c570c424043b17f9c623c9c37648cec3/checkpoint-6600/ \
+    --args.output-dir=./test_libero_labeling_5x \
+    --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_5x/snapshots/64337ea6c5a7f086cd9aaf475b2469cabe10da8d/checkpoint-11900/ \
     --args.batch-size=16
 """
 import logging
