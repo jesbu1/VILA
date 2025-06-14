@@ -258,7 +258,6 @@ def get_path_mask_from_vlm_direct(
                         conv.append_message(assistant_role, None)
 
                         prompt_text = conv.get_prompt()
-                        print(prompt_text)
                         prompts.append(prompt_text)
                         valid_images.append(pil_img)
                         batch_results_map.append(
