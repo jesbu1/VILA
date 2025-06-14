@@ -34,7 +34,6 @@ class Args:
     data_dir: str  # Directory containing the Bridge dataset
     output_dir: str  # Directory to save the generated paths and masks
     model_path: str  # Path to the VLM model
-    resize_size: int = 224 # Size to resize images for VLM
     draw_path: bool = True  # Whether to generate paths
     draw_mask: bool = True  # Whether to generate masks
     flip_image_horizontally: bool = False  # Whether to flip images horizontally

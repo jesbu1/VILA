@@ -161,6 +161,12 @@ def generate_paths_masks(args: Args) -> None:
 
                 # Get paths and masks using direct VLM inference
                 try:
+                    #if episode_idx == 10:   
+                    #    for i in range(len(episode_tasks)):
+                    #        #'put the yellow and white mug on the right plate'
+                    #        episode_tasks[i] = episode_tasks[i].replace("right", "left")
+                    # flip the images horizontally
+                    episode_images = [np.fliplr(img) for img in episode_images]
                     paths, masks = get_path_mask_from_vlm_direct(
                         episode_images,
                         episode_tasks,
