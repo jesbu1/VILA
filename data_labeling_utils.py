@@ -137,10 +137,12 @@ def get_path_mask_from_vlm_direct(
                     # Create conversation template (following vila_3b_server.py pattern)
                     conv = conv_templates[CONV_MODE].copy()
                     user_role = conv.roles[0]
+                    assistant_role = conv.roles[1]
 
                     # Create query for path and mask prediction
-                    query = get_prompt(task_desc, PROMPT_TYPE, prompt_eval=True)
-                    query = f"{IMAGE_PLACEHOLDER}{query}"
+                    #query = get_prompt(task_desc, PROMPT_TYPE, prompt_eval=True)
+                    query = get_prompt(task_desc, PROMPT_TYPE)
+                    #query = f"{IMAGE_PLACEHOLDER}{query}"
 
                     if query is None:
                         paths.append(None)
@@ -148,13 +150,16 @@ def get_path_mask_from_vlm_direct(
                         continue
 
                     # Normalize image tags
-                    normalized_query = normalize_image_tags(model, query)
+                    #normalized_query = normalize_image_tags(model, query)
 
                     # Add messages to conversation
-                    conv.append_message(user_role, normalized_query)
+                    #conv.append_message(user_role, normalized_query)
+                    conv.append_message(user_role, query)
+                    conv.append_message(assistant_role, None)
 
                     # Get the full prompt
                     prompt_text = conv.get_prompt()
+                    breakpoint()
 
                     # Process image
                     images_tensor = process_images(
@@ -235,20 +240,25 @@ def get_path_mask_from_vlm_direct(
                         # Create conversation template
                         conv = conv_templates[CONV_MODE].copy()
                         user_role = conv.roles[0]
+                        assistant_role = conv.roles[1]
 
                         # Create query for path and mask prediction
-                        query = get_prompt(task_desc, PROMPT_TYPE, prompt_eval=True)
-                        query = f"{IMAGE_PLACEHOLDER}{query}"
+                        #query = get_prompt(task_desc, PROMPT_TYPE, prompt_eval=True)
+                        #query = f"{IMAGE_PLACEHOLDER}{query}"
+                        query = get_prompt(task_desc, PROMPT_TYPE)
 
                         if query is None:
                             batch_results_map.append(None)  # Mark as skipped
                             continue
 
                         # Normalize image tags and build conversation
-                        normalized_query = normalize_image_tags(model, query)
-                        conv.append_message(user_role, normalized_query)
+                        #normalized_query = normalize_image_tags(model, query)
+                        #conv.append_message(user_role, normalized_query)
+                        conv.append_message(user_role, query)
+                        conv.append_message(assistant_role, None)
 
                         prompt_text = conv.get_prompt()
+                        print(prompt_text)
                         prompts.append(prompt_text)
                         valid_images.append(pil_img)
                         batch_results_map.append(
