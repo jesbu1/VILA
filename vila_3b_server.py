@@ -30,12 +30,12 @@ from llava.model.builder import load_pretrained_model
 from llava.utils import disable_torch_init
 
 from server import ChatMessage, TextContent, ImageURL, ImageContent, get_literal_values, load_image
-
+OLD_PROMPT_FORMAT = False
 
 
 IMAGE_CONTENT_BASE64_REGEX = re.compile(r"^data:image/(png|jpe?g);base64,(.*)$")
 PATH_MODEL_NAME = "vila_3b_oxe_sim_path"
-PATH_MASK_MODEL_NAME = "vila_3b_path_mask"
+PATH_MASK_MODEL_NAME = "vila_3b_path_mask_5x"
 EVERYTHING_MODEL_NAME = "vila_3b_oxe_sim_jack_o"
 
 
@@ -59,6 +59,7 @@ class ChatCompletionRequest(BaseModel):
         "vila_3b_oxe_sim_path_mask",
         "vila_3b_oxe_sim_jack_o",
         "vila_3b_path_mask",
+        "vila_3b_path_mask_5x",
     ]
     messages: List[ChatMessage]
     max_tokens: Optional[int] = 512
@@ -166,9 +167,28 @@ async def chat_completions(request: ChatCompletionRequest):
         assistant_role = conv.roles[1]
 
         for message in messages:
-            if message.role == "user":
-                prompt = ""
+            if OLD_PROMPT_FORMAT:
+                if message.role == "user":
+                    prompt = ""
 
+                    if isinstance(message.content, str):
+                        prompt += message.content
+                    if isinstance(message.content, list):
+                        for content in message.content:
+                            if content.type == "text":
+                                prompt += content.text
+                            if content.type == "image_url":
+                                image = load_image(content.image_url.url)
+                                images.append(image)
+                                prompt += IMAGE_PLACEHOLDER
+
+                    normalized_prompt = normalize_image_tags(model, prompt)
+                    conv.append_message(user_role, normalized_prompt)
+                if message.role == "assistant":
+                    prompt = message.content
+                    conv.append_message(assistant_role, prompt)
+            else:
+                prompt = ""
                 if isinstance(message.content, str):
                     prompt += message.content
                 if isinstance(message.content, list):
@@ -178,13 +198,9 @@ async def chat_completions(request: ChatCompletionRequest):
                         if content.type == "image_url":
                             image = load_image(content.image_url.url)
                             images.append(image)
-                            prompt += IMAGE_PLACEHOLDER
-
-                normalized_prompt = normalize_image_tags(model, prompt)
-                conv.append_message(user_role, normalized_prompt)
-            if message.role == "assistant":
-                prompt = message.content
-                conv.append_message(assistant_role, prompt)
+                            # prompt += IMAGE_PLACEHOLDER
+                conv.append_message(user_role, prompt)
+                conv.append_message(assistant_role, None)
 
         prompt_text = conv.get_prompt()
         print("Prompt input: ", prompt_text)
