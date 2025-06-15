@@ -121,6 +121,8 @@ def generate_paths_masks(args: Args) -> None:
             to_idx = lerobot_dataset.episode_data_index["to"][episode_idx].item()
 
             for i, frame_idx in enumerate(range(from_idx, to_idx)):
+                if i % args.vlm_call_frequency != 0:
+                    continue
                 frame = lerobot_dataset[frame_idx]
 
                 # Get task description for this step
