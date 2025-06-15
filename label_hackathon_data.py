@@ -145,8 +145,8 @@ def generate_paths_masks(args: Args) -> None:
 
                 for cam in [CAM_NAME]:
                     img = frame["observation.images." + cam]
-                    img = transform(img)
-                    step_images.append(img.numpy() * 255)
+                    img = transform(img).permute(1, 2, 0).numpy() * 255
+                    step_images.append(img)
                     step_tasks.append(task_description)
                     step_timesteps.append(i)
                     step_cameras.append(cam)
