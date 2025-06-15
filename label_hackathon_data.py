@@ -35,7 +35,7 @@ pip install tensorflow
 CUDA_VISIBLE_DEVICES=0 python label_hackathon_data.py \
     --args.data-dir=/data/shared/hackathon_data/ \
     --args.output-dir=./test_hackathon_labeling_5x \
-    --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_5x/snapshots/64337ea6c5a7f086cd9aaf475b2469cabe10da8d/checkpoint-11900/ \
+    --args.model-path /data/shared/hackathon/huggingface/models--memmelma--vila_3b_path_mask_5x/snapshots/64337ea6c5a7f086cd9aaf475b2469cabe10da8d/checkpoint-11900/ \
     --args.batch-size=16
 """
 
