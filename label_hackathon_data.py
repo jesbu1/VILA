@@ -39,7 +39,7 @@ CUDA_VISIBLE_DEVICES=0 python label_hackathon_data.py \
     --args.batch-size=16 \
     --args.vlm-call-frequency=60
 """
-
+SKIP_EPISODES = [24]
 CAM_NAME = "stationary"
 
 import logging
@@ -103,6 +103,8 @@ def generate_paths_masks(args: Args) -> None:
         for episode_idx in tqdm.tqdm(
             range(lerobot_dataset.num_episodes), desc="Processing episodes"
         ):
+            if episode_idx in SKIP_EPISODES:
+                continue
             # Skip episodes that have already been saved
             if episode_idx < last_episode:
                 continue
