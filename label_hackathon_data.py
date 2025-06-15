@@ -39,7 +39,7 @@ CUDA_VISIBLE_DEVICES=0 python label_hackathon_data.py \
     --args.batch-size=16
 """
 
-CAM_NAME = "336222072709"
+CAM_NAME = "stationary"
 
 import logging
 from pathlib import Path
