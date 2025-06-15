@@ -59,7 +59,7 @@ from llava.model.builder import load_pretrained_model
 from llava.utils import disable_torch_init
 from torchvision import transforms
 
-APPLY_TRANSFORM = False
+APPLY_TRANSFORM = True
 RESOLUTION = 224
 transform = transforms.Compose(
     [
