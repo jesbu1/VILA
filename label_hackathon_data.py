@@ -59,6 +59,7 @@ from llava.model.builder import load_pretrained_model
 from llava.utils import disable_torch_init
 from torchvision import transforms
 
+APPLY_TRANSFORM = False
 RESOLUTION = 224
 transform = transforms.Compose(
     [
@@ -146,7 +147,10 @@ def generate_paths_masks(args: Args) -> None:
 
                 for cam in [CAM_NAME]:
                     img = frame["observation.images." + cam]
-                    img = transform(img).permute(1, 2, 0).numpy() * 255
+                    if APPLY_TRANSFORM:
+                        img = transform(img).permute(1, 2, 0).numpy() * 255
+                    else:
+                        img = img.permute(1, 2, 0).numpy() * 255
                     step_images.append(img)
                     step_tasks.append(task_description)
                     step_timesteps.append(i)
