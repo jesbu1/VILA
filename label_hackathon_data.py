@@ -33,9 +33,9 @@ pip install tensorflow
 
 # make sure transformers version is 4.37.2
 CUDA_VISIBLE_DEVICES=0 python label_hackathon_data.py \
-    --args.data-dir=minjunkevink/trossen_objects_pick_place \
+    --args.data-dir=minjunkevink/updated_hamster_dataset_v2 \
     --args.output-dir=./test_hackathon_labeling_5x \
-    --args.model-path /data/shared/hackathon/huggingface/models--memmelma--vila_3b_path_mask_5x/snapshots/64337ea6c5a7f086cd9aaf475b2469cabe10da8d/checkpoint-11900/ \
+    --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_5x/snapshots/64337ea6c5a7f086cd9aaf475b2469cabe10da8d/checkpoint-11900/ \
     --args.batch-size=16 \
     --args.vlm-call-frequency=30
 """
@@ -50,6 +50,40 @@ import tqdm
 import tyro
 import h5py
 from data_labeling_utils import Args, get_path_mask_from_vlm_direct
+
+
+instruction_map = {}
+
+for i in range(0, 12):
+    instruction_map[i] = "Pick up the banana and place it in the basket"
+
+for i in range(12, 24):
+    instruction_map[i] = "Pick up the grape and place it in the basket"
+
+for i in range(25, 28):
+    instruction_map[i] = "Pick up the banana in the basket and place it in on the table"
+
+for i in range(28, 32):
+    instruction_map[i] = "Pick up the grape in the basket and place it in on the table"
+
+for i in range(32, 36):
+    instruction_map[i] = "Pick up the lime in the basket and place it in on the table"
+
+for i in range(36, 40):
+    instruction_map[i] = "Pick up the cherry in the basket and place it in on the table"
+
+instruction_map[40] = "Pick up the cherry in the smaller basket and place it next to the banana"
+instruction_map[41] = "Pick up the cherry in the smaller basket and place it next to the grape"
+
+for i in range(42, 44):
+    instruction_map[i] = "Pick up the lime in the smaller basket and place it next to the banana"
+
+instruction_map[44] = "Pick up the lime in the smaller basket and place it next to the grape"
+instruction_map[45] = "Pick up the grape in the smaller basket and place it next to the cherry"
+instruction_map[46] = "Pick up the grape in the smaller basket and place it next to the lime"
+instruction_map[47] = "Pick up the grape in the smaller basket and place it next to the banana"
+instruction_map[48] = "Pick up the banana in the smaller basket and place it next to the cherries"
+instruction_map[49] = "Pick up the banana in the smaller basket and place it next to the lime"
 
 
 from llava.mm_utils import (
@@ -139,7 +173,8 @@ def generate_paths_masks(args: Args) -> None:
                 frame = lerobot_dataset[frame_idx]
 
                 # Get task description for this step
-                task_description = frame["task"]
+                #task_description = frame["task"]
+                task_description = instruction_map[episode_idx]
 
                 # Get images from all available cameras (not all zeros)
                 step_images = []
