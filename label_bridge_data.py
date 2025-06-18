@@ -47,6 +47,14 @@ CUDA_VISIBLE_DEVICES=1 python label_bridge_data.py \
     --args.batch-size=16 \
     --args.start_percent=50 \
     --args.end_percent=100
+
+Then merge the h5 files:
+
+CUDA_VISIBLE_DEVICES=0 python merge_h5s.py \
+    --input-directory=./test_bridge_labeling_5x \
+    --output-file=./test_bridge_labeling_5x/bridge_paths_masks_merged.h5
+
+
 """
 
 import logging
