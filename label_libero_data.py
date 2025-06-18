@@ -32,7 +32,7 @@ pip install shapely
 pip install tensorflow
 
 
-CUDA_VISIBLE_DEVICES=1 python label_libero_data.py \
+CUDA_VISIBLE_DEVICES=0 python label_libero_data.py \
     --args.data-dir=/home/jessez/.cache/huggingface/hub/datasets--jesbu1--libero_90_rlds/snapshots/93169e35e1e6ddf6c43171bf038cb4971b60e72a/ \
     --args.output-dir=./test_libero_labeling_5x \
     --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_5x/snapshots/64337ea6c5a7f086cd9aaf475b2469cabe10da8d/checkpoint-11900/ \
