@@ -3,13 +3,13 @@ import logging
 import numpy as np
 import cv2
 CONV_MODE = "vicuna_v1"
-from vila_utils.utils.prompts import get_prompt
+from vila_utils.utils.prompts import get_prompt, get_answer_from_path
 from vila_utils.utils.decode import (
     add_path_2d_to_img_alt_fast,
     add_mask_2d_to_img,
     get_path_from_answer,
 )
-PROMPT_TYPE = "path_mask"
+PROMPT_TYPE = "path_mask_history"
 from vila_utils.utils.encode import scale_path
 from PIL import Image
 from typing import List, Tuple, Optional
@@ -91,6 +91,7 @@ def get_path_mask_from_vlm_direct(
     image_processor,
     args: Args,
     device,
+    path_history: List[str] = None,
 ) -> Tuple[List[Optional[np.ndarray]], List[Optional[np.ndarray]]]:
     """
     Get path and mask predictions from VLM using direct inference.
@@ -103,7 +104,7 @@ def get_path_mask_from_vlm_direct(
         image_processor: Image processor
         args: Arguments containing inference parameters
         device: Device to run inference on
-
+        path_history: List of path history strings
     Returns:
         Tuple of (paths, masks) lists
     """
@@ -128,7 +129,7 @@ def get_path_mask_from_vlm_direct(
     # Choose processing method based on batch_size
     if args.batch_size == 1:
         # Process each image individually (more reliable for debugging)
-        for pil_img, task_desc in zip(pil_images, task_descriptions):
+        for i, pil_img, task_desc in enumerate(zip(pil_images, task_descriptions)):
             failed = True
             failure_count = 0
             while failed and failure_count < 5:
@@ -140,7 +141,16 @@ def get_path_mask_from_vlm_direct(
 
                     # Create query for path and mask prediction
                     #query = get_prompt(task_desc, PROMPT_TYPE, prompt_eval=True)
-                    query = get_prompt(task_desc, PROMPT_TYPE)
+                    if path_history is not None:
+                        assert (
+                            PROMPT_TYPE == "path_mask_history"
+                        ), "Path history is only supported for path_mask_history prompt type"
+                        history_as_answer = get_answer_from_path(path_history[i])
+                        query = get_prompt(
+                            task_desc, PROMPT_TYPE, history=history_as_answer
+                        )
+                    else:
+                        query = get_prompt(task_desc, PROMPT_TYPE)
                     #query = f"{IMAGE_PLACEHOLDER}{query}"
 
                     if query is None:
@@ -158,7 +168,6 @@ def get_path_mask_from_vlm_direct(
 
                     # Get the full prompt
                     prompt_text = conv.get_prompt()
-                    breakpoint()
 
                     # Process image
                     images_tensor = process_images(
@@ -222,6 +231,10 @@ def get_path_mask_from_vlm_direct(
         for i in range(0, len(images), batch_size):
             batch_images = pil_images[i : i + batch_size]
             batch_tasks = task_descriptions[i : i + batch_size]
+            if path_history is not None:
+                batch_path_history = path_history[i : i + batch_size]
+            else:
+                batch_path_history = None
 
             failed = True
             failure_count = 0
@@ -244,7 +257,18 @@ def get_path_mask_from_vlm_direct(
                         # Create query for path and mask prediction
                         #query = get_prompt(task_desc, PROMPT_TYPE, prompt_eval=True)
                         #query = f"{IMAGE_PLACEHOLDER}{query}"
-                        query = get_prompt(task_desc, PROMPT_TYPE)
+                        if batch_path_history is not None:
+                            history_as_answer = get_answer_from_path(
+                                batch_path_history[idx]
+                            )
+                            assert (
+                                PROMPT_TYPE == "path_mask_history"
+                            ), "Path history is only supported for path_mask_history prompt type"
+                            query = get_prompt(
+                                task_desc, PROMPT_TYPE, history=history_as_answer
+                            )
+                        else:
+                            query = get_prompt(task_desc, PROMPT_TYPE)
 
                         if query is None:
                             batch_results_map.append(None)  # Mark as skipped
