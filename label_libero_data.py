@@ -36,7 +36,7 @@ CUDA_VISIBLE_DEVICES=0 python label_libero_data.py \
     --args.data-dir=/home/jessez/.cache/huggingface/hub/datasets--jesbu1--libero_90_rlds/snapshots/93169e35e1e6ddf6c43171bf038cb4971b60e72a/ \
     --args.output-dir=./test_libero_labeling_13b \
     --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_13b_path_mask_new/snapshots/08855b9bda093a96fe452bb9fa300564f4760e4a/checkpoint-11500/  \
-    --args.batch-size=8 \
+    --args.batch-size=4 \
     --args.load-8bit
 """
 import logging
