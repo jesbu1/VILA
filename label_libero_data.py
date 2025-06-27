@@ -170,13 +170,13 @@ def generate_paths_masks(args: Args) -> None:
                     all_paths = []
                     all_masks = []
                     for episode_step in range(len(episode_images)):
-                        if episode_step == 0:
-                            path_history = None
+                        if len(all_paths) > 0:
+                            path_history = all_paths[-1:]
                         else:
-                            path_history = all_paths[-1]
+                            path_history = None
                         paths, masks = get_path_mask_from_vlm_direct(
-                            episode_images,
-                            episode_tasks,
+                            episode_images[episode_step:episode_step+1],
+                            episode_tasks[episode_step:episode_step+1],
                             model,
                             tokenizer,
                             image_processor,

@@ -127,7 +127,7 @@ def get_path_mask_from_vlm_direct(
     # Choose processing method based on batch_size
     if args.batch_size == 1:
         # Process each image individually (more reliable for debugging)
-        for i, pil_img, task_desc in enumerate(zip(pil_images, task_descriptions)):
+        for i, (pil_img, task_desc) in enumerate(zip(pil_images, task_descriptions)):
             failed = True
             failure_count = 0
             while failed and failure_count < 5:
@@ -166,6 +166,7 @@ def get_path_mask_from_vlm_direct(
 
                     # Get the full prompt
                     prompt_text = conv.get_prompt()
+                    print(prompt_text)
 
                     # Process image
                     images_tensor = process_images(
