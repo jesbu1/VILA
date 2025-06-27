@@ -130,7 +130,6 @@ def generate_paths_masks(args: Args) -> None:
                     step_tasks = []
                     step_timesteps = []
                     step_cameras = []
-                    
                     for cam in ["image"]:
                         if cam in step["observation"]:
                             img = step["observation"][cam]
@@ -167,15 +166,28 @@ def generate_paths_masks(args: Args) -> None:
                     #        episode_tasks[i] = episode_tasks[i].replace("right", "left")
                     # flip the images horizontally
                     episode_images = [np.fliplr(img) for img in episode_images]
-                    paths, masks = get_path_mask_from_vlm_direct(
-                        episode_images,
-                        episode_tasks,
-                        model,
-                        tokenizer,
-                        image_processor,
-                        args,
-                        device,
-                    )
+                    # for LIBERO we can just iterate over each episode image for the path history thing
+                    all_paths = []
+                    all_masks = []
+                    for episode_step in range(len(episode_images)):
+                        if episode_step == 0:
+                            path_history = None
+                        else:
+                            path_history = all_paths[-1]
+                        paths, masks = get_path_mask_from_vlm_direct(
+                            episode_images,
+                            episode_tasks,
+                            model,
+                            tokenizer,
+                            image_processor,
+                            args,
+                            device,
+                            path_history=path_history,
+                        )
+                        all_paths.extend(paths)
+                        all_masks.extend(masks)
+                    paths = all_paths
+                    masks = all_masks
 
                     # Save paths and masks for this episode
                     if args.draw_path and paths:
