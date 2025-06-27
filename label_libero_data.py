@@ -34,9 +34,10 @@ pip install tensorflow
 
 CUDA_VISIBLE_DEVICES=0 python label_libero_data.py \
     --args.data-dir=/home/jessez/.cache/huggingface/hub/datasets--jesbu1--libero_90_rlds/snapshots/93169e35e1e6ddf6c43171bf038cb4971b60e72a/ \
-    --args.output-dir=./test_libero_labeling_5x \
-    --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_5x/snapshots/64337ea6c5a7f086cd9aaf475b2469cabe10da8d/checkpoint-11900/ \
-    --args.batch-size=16
+    --args.output-dir=./test_libero_labeling_13b \
+    --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_13b_path_mask_new/snapshots/08855b9bda093a96fe452bb9fa300564f4760e4a/checkpoint-11500/  \
+    --args.batch-size=8 \
+    --args.load-8bit
 """
 import logging
 from pathlib import Path
@@ -67,7 +68,7 @@ def generate_paths_masks(args: Args) -> None:
 
     model_name = get_model_name_from_path(args.model_path)
     tokenizer, model, image_processor, context_len = load_pretrained_model(
-        args.model_path, model_name, None
+        args.model_path, model_name, None, load_8bit=args.load_8bit
     )
 
     device = next(model.parameters()).device
@@ -161,33 +162,46 @@ def generate_paths_masks(args: Args) -> None:
                 # Get paths and masks using direct VLM inference
                 try:
                     #if episode_idx == 10:   
-                    #    for i in range(len(episode_tasks)):
-                    #        #'put the yellow and white mug on the right plate'
+                    #for i in range(len(episode_tasks)):
+                    #    if "right" in episode_tasks[i]:
                     #        episode_tasks[i] = episode_tasks[i].replace("right", "left")
+                    #    elif "left" in episode_tasks[i]:
+                    #        episode_tasks[i] = episode_tasks[i].replace("left", "right")
                     # flip the images horizontally
                     episode_images = [np.fliplr(img) for img in episode_images]
                     # for LIBERO we can just iterate over each episode image for the path history thing
-                    all_paths = []
-                    all_masks = []
-                    for episode_step in range(len(episode_images)):
-                        if len(all_paths) > 0:
-                            path_history = all_paths[-1:]
-                        else:
-                            path_history = None
-                        paths, masks = get_path_mask_from_vlm_direct(
-                            episode_images[episode_step:episode_step+1],
-                            episode_tasks[episode_step:episode_step+1],
-                            model,
-                            tokenizer,
-                            image_processor,
-                            args,
-                            device,
-                            path_history=path_history,
-                        )
-                        all_paths.extend(paths)
-                        all_masks.extend(masks)
-                    paths = all_paths
-                    masks = all_masks
+
+                    # for history
+                    #all_paths = []
+                    #all_masks = []
+                    #for episode_step in range(len(episode_images)):
+                    #    if len(all_paths) > 0:
+                    #        path_history = all_paths[-1:]
+                    #    else:
+                    #        path_history = None
+                    #    paths, masks = get_path_mask_from_vlm_direct(
+                    #        episode_images[episode_step:episode_step+1],
+                    #        episode_tasks[episode_step:episode_step+1],
+                    #        model,
+                    #        tokenizer,
+                    #        image_processor,
+                    #        args,
+                    #        device,
+                    #        path_history=path_history,
+                    #    )
+                    #    all_paths.extend(paths)
+                    #    all_masks.extend(masks)
+                    #paths = all_paths
+                    #masks = all_masks
+                    paths, masks = get_path_mask_from_vlm_direct(
+                        episode_images,
+                        episode_tasks,
+                        model,
+                        tokenizer,
+                        image_processor,
+                        args,
+                        device,
+                    )
 
                     # Save paths and masks for this episode
                     if args.draw_path and paths:

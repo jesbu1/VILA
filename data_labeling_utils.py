@@ -9,7 +9,7 @@ from vila_utils.utils.decode import (
     add_mask_2d_to_img,
     get_path_from_answer,
 )
-PROMPT_TYPE = "path_mask_history"
+PROMPT_TYPE = "path_mask"
 from vila_utils.utils.encode import scale_path
 from PIL import Image
 from typing import List, Tuple, Optional
@@ -42,7 +42,8 @@ class Args:
     top_p: Optional[float] = 0.95
     max_new_tokens: int = 512
     num_beams: int = 1
-    vlm_call_frequency: int = 50  # Save every N timesteps
+    vlm_call_frequency: int = 30  # Save every N timesteps
+    load_8bit: bool = False
 
 
 def normalize_image_tags(model, qs: str) -> str:
@@ -166,8 +167,6 @@ def get_path_mask_from_vlm_direct(
 
                     # Get the full prompt
                     prompt_text = conv.get_prompt()
-                    print(prompt_text)
-
                     # Process image
                     images_tensor = process_images(
                         [pil_img], image_processor, model.config

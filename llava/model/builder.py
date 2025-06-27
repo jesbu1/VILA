@@ -43,6 +43,7 @@ def load_pretrained_model(
 
     if load_8bit:
         kwargs["load_in_8bit"] = True
+        kwargs["torch_dtype"] = torch.float16
     elif load_4bit:
         kwargs["load_in_4bit"] = True
         kwargs["quantization_config"] = BitsAndBytesConfig(
