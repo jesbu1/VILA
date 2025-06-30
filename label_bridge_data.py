@@ -34,16 +34,20 @@ pip install tensorflow
 
 CUDA_VISIBLE_DEVICES=0 python label_bridge_data.py \
     --args.data-dir=/data/shared/openx_rlds_data/ \
-    --args.output-dir=./test_bridge_labeling_5x \
-    --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_5x/snapshots/64337ea6c5a7f086cd9aaf475b2469cabe10da8d/checkpoint-11900/ \
+    --args.output-dir=./test_bridge_labeling_13b \
+    --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_13b_path_mask_new/snapshots/08855b9bda093a96fe452bb9fa300564f4760e4a/checkpoint-11500/  \
     --args.batch-size=16 \
+    --args.vlm-call-frequency=60 \
+    --args.load-8bit \
     --args.start_percent=0.0 \
     --args.end_percent=50
 
 CUDA_VISIBLE_DEVICES=1 python label_bridge_data.py \
     --args.data-dir=/data/shared/openx_rlds_data/ \
-    --args.output-dir=./test_bridge_labeling_5x \
-    --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_5x/snapshots/64337ea6c5a7f086cd9aaf475b2469cabe10da8d/checkpoint-11900/ \
+    --args.output-dir=./test_bridge_labeling_13b \
+    --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_13b_path_mask_new/snapshots/08855b9bda093a96fe452bb9fa300564f4760e4a/checkpoint-11500/  \
+    --args.vlm-call-frequency=60 \
+    --args.load-8bit \
     --args.batch-size=16 \
     --args.start_percent=50 \
     --args.end_percent=100
