@@ -12,8 +12,8 @@ MAKE SURE IT's the hamster branch!
 ```bash
 # just the one relevant model
 #huggingface-cli download memmelma/vila_3b_oxe_sim_path_mask
-huggingface-cli download memmelma/vila_3b_path_mask_5x
-CUDA_VISIBLE_DEVICES=0 python -W ignore vila_3b_server.py --model-paths ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_5x/snapshots/64337ea6c5a7f086cd9aaf475b2469cabe10da8d/checkpoint-11900/
+huggingface-cli download memmelma/vila_13b_path_mask_new
+CUDA_VISIBLE_DEVICES=0 python -W ignore vila_3b_server.py --model-paths ~/.cache/huggingface/hub/models--memmelma--vila_13b_path_mask_new/snapshots/08855b9bda093a96fe452bb9fa300564f4760e4a/checkpoint-11500/
 # all models 
 #CUDA_VISIBLE_DEVICES=0 python -W ignore vila_3b_server.py --model-paths ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask/snapshots/3d08e92de1cd7517b1acbf72648ce3bbf48c19ae/checkpoint-5700
 # CUDA_VISIBLE_DEVICES=0 python -W ignore vila_3b_server.py --model-paths /data/jessez/huggingface_cache/hub/models--memmelma--vila_3b_oxe_sim_path/snapshots/bb6d0d1c3201f26caad76c304eed81ec60d6ad53/checkpoint-5700/ /data/jessez/huggingface_cache/hub/models--memmelma--vila_3b_oxe_sim_path_mask/snapshots/3d08e92de1cd7517b1acbf72648ce3bbf48c19ae/checkpoint-5700/ /data/jessez/huggingface_cache/hub/models--memmelma--vila_3b_oxe_sim_jack_o/snapshots/d0f7c05cc9d9b7b6b57cba5bb0dc17758e72d1f3/checkpoint-8700

@@ -35,7 +35,7 @@ OLD_PROMPT_FORMAT = False
 
 IMAGE_CONTENT_BASE64_REGEX = re.compile(r"^data:image/(png|jpe?g);base64,(.*)$")
 PATH_MODEL_NAME = "vila_3b_oxe_sim_path"
-PATH_MASK_MODEL_NAME = "vila_3b_path_mask_5x"
+PATH_MASK_MODEL_NAME = "vila_13b_path_mask_new"
 EVERYTHING_MODEL_NAME = "vila_3b_oxe_sim_jack_o"
 
 
@@ -60,6 +60,7 @@ class ChatCompletionRequest(BaseModel):
         "vila_3b_oxe_sim_jack_o",
         "vila_3b_path_mask",
         "vila_3b_path_mask_5x",
+        "vila_13b_path_mask_new",
     ]
     messages: List[ChatMessage]
     max_tokens: Optional[int] = 512
