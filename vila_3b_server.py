@@ -111,7 +111,9 @@ async def lifespan(app: FastAPI):
         raise ValueError("At least one model path must be provided via --model-paths")
     for model_path in app.args.model_paths:
         model_name = get_model_name_from_path(model_path)
-        tokenizer, model, image_processor, context_len = load_pretrained_model(model_path, model_name, None)
+        tokenizer, model, image_processor, context_len = load_pretrained_model(
+            model_path, model_name, None, load_8bit=app.args.load_8bit == 1
+        )
         if "jack" in model_path:
             model_path_jack = model
             model_name = EVERYTHING_MODEL_NAME
@@ -272,6 +274,7 @@ if __name__ == "__main__":
     parser.add_argument("--model-paths", type=str, nargs='+', required=True, help="List of paths to the models")
     parser.add_argument("--conv-mode", type=str, default=conv_mode)
     parser.add_argument("--workers", type=int, default=workers)
+    parser.add_argument("--load-8bit", type=int, default=0)
     app.args = parser.parse_args()
 
     uvicorn.run(app, host=host, port=port, workers=workers, log_level="debug")
