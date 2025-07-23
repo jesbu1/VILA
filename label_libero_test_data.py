@@ -35,6 +35,7 @@ CUDA_VISIBLE_DEVICES=0 python label_libero_test_data.py \
     --args.data-dir=/data/jessez/libero_processed_256_05_12 \
     --args.output-dir=./libero_test_dataset_labeled_vila3b \
     --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_fast/snapshots/12df7a04221a50e88733cd2f1132eb01257aba0d/checkpoint-11700/ \
+    --args.vlm_call_frequency=70 \
     --args.batch-size=4 
 """
 
