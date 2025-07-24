@@ -42,7 +42,7 @@ class Args:
     top_p: Optional[float] = 0.95
     max_new_tokens: int = 512
     num_beams: int = 1
-    vlm_call_frequency: int = 30  # Save every N timesteps
+    vlm_call_frequency: int = 50  # Save every N timesteps
     load_8bit: bool = False
 
 
