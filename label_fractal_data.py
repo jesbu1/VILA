@@ -121,7 +121,7 @@ def generate_paths_masks(args: Args) -> None:
                 episode_group = f.create_group(f"episode_{episode_idx}")
 
                 # Process each step
-                for i, step in enumerate(episode["steps"].as_numpy_iterator()):
+                for i, step in enumerate(episode["steps"]):
                     if i % args.vlm_call_frequency != 0:
                         continue
 
