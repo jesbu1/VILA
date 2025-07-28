@@ -58,7 +58,7 @@ from llava.model.builder import load_pretrained_model
 from llava.utils import disable_torch_init
 
 
-RAW_DATASET_NAMES = ["fractal_20220817_data"]
+RAW_DATASET_NAMES = ["fractal20220817_data"]
 
 
 def generate_paths_masks(args: Args) -> None:
