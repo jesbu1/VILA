@@ -34,8 +34,8 @@ pip install tensorflow
 
     #--args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_fast/snapshots/12df7a04221a50e88733cd2f1132eb01257aba0d/checkpoint-11700/ \
 CUDA_VISIBLE_DEVICES=0 python label_fractal_data.py \
-    --args.data-dir=/home/jessez/.cache/huggingface/hub/datasets--jesbu1--libero_90_rlds/snapshots/93169e35e1e6ddf6c43171bf038cb4971b60e72a/ \
-    --args.output-dir=./libero_90_labels_3b \
+    --args.data-dir=/data/shared/openx_rlds_data/ \
+    --args.output-dir=./fractal_labels_3b \
     --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_fast/snapshots/12df7a04221a50e88733cd2f1132eb01257aba0d/checkpoint-11700/ \
     --args.vlm_call_frequency=50 \
     --args.batch-size=8 
@@ -58,7 +58,7 @@ from llava.model.builder import load_pretrained_model
 from llava.utils import disable_torch_init
 
 
-RAW_DATASET_NAMES = ["libero_90_openvla_processed"]
+RAW_DATASET_NAMES = ["fractal_20220817_data"]
 
 
 def generate_paths_masks(args: Args) -> None:
