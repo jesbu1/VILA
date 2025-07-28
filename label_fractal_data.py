@@ -37,7 +37,7 @@ CUDA_VISIBLE_DEVICES=0 python label_fractal_data.py \
     --args.data-dir=/data/shared/openx_rlds_data/ \
     --args.output-dir=./fractal_labels_3b \
     --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_fast/snapshots/12df7a04221a50e88733cd2f1132eb01257aba0d/checkpoint-11700/ \
-    --args.vlm_call_frequency=50 \
+    --args.vlm_call_frequency=30 \
     --args.batch-size=8 
 """
 
