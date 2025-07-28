@@ -44,6 +44,7 @@ CUDA_VISIBLE_DEVICES=0 python label_fractal_data.py \
 import logging
 from pathlib import Path
 import tensorflow_datasets as tfds
+import tensorflow as tf
 import numpy as np
 import tqdm
 import tyro
@@ -82,8 +83,20 @@ def generate_paths_masks(args: Args) -> None:
 
     # Create HDF5 file to store paths and masks
     for raw_dataset_name in RAW_DATASET_NAMES:
-        # Load dataset
-        raw_dataset = tfds.load(raw_dataset_name, data_dir=args.data_dir, split="train")
+        # Load dataset builder
+        builder = tfds.builder(raw_dataset_name, data_dir=args.data_dir)
+        # Define custom decoding behavior for the field that expects 256 x 320 for some reason when
+        # it should be 256 x 256
+        custom_decoder = {
+            "steps": {
+                "observation": {
+                    "image": tfds.decode.SkipDecoding(),  # We'll decode manually later
+                }
+            }
+        }
+
+        # Load the dataset, skipping strict shape checks
+        raw_dataset = builder.as_dataset(split="train", decoders=custom_decoder)
 
         h5_path = output_path / f"{raw_dataset_name}_paths_masks.h5"
         with h5py.File(h5_path, "a") as f:
@@ -126,17 +139,20 @@ def generate_paths_masks(args: Args) -> None:
                         continue
 
                     # Get task description for this step
-                    task_description = step["language_instruction"].decode()
+                    task_description = (
+                        step["observation"]["natural_language_instruction"]
+                        .numpy()
+                        .decode()
+                    )
 
                     # Get images from all available cameras (not all zeros)
                     step_images = []
                     step_tasks = []
                     step_timesteps = []
                     step_cameras = []
-                    breakpoint()
                     for cam in ["image"]:
                         if cam in step["observation"]:
-                            img = step["observation"][cam]
+                            img = tf.io.decode_image(step["observation"][cam]).numpy()
                             if img is not None and not np.all(img == 0):
                                 step_images.append(img)
                                 step_tasks.append(task_description)
