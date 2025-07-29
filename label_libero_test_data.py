@@ -115,7 +115,7 @@ def generate_paths_masks(args: Args) -> None:
                         total=len(libero_trajectory_f["data"]),
                         desc=f"Processing {libero_h5_file}",
                     ):
-                        if episode_idx > MAX_EPISODES_PER_H5:
+                        if episode_idx + 1 == MAX_EPISODES_PER_H5:
                             break
                         if episode_idx < last_episode:
                             continue
