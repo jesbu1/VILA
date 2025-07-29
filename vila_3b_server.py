@@ -124,6 +124,8 @@ async def lifespan(app: FastAPI):
         else:
             model_path_only = model
             model_name = PATH_MODEL_NAME
+
+        model = torch.compile(model)
         print(f"Model {model_name} loaded successfully. Context length: {context_len}")
     yield
 
