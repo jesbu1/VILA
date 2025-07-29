@@ -49,6 +49,7 @@ import numpy as np
 import tqdm
 import tyro
 import h5py
+import torch
 from data_labeling_utils import Args, get_path_mask_from_vlm_direct
 
 
@@ -73,6 +74,7 @@ def generate_paths_masks(args: Args) -> None:
     )
 
     device = next(model.parameters()).device
+    model = torch.compile(model)
     logging.info(
         f"Model loaded successfully on {device}. Context length: {context_len}"
     )
