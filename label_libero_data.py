@@ -163,15 +163,6 @@ def generate_paths_masks(args: Args) -> None:
 
                 # Get paths and masks using direct VLM inference
                 try:
-                    for i in range(len(episode_images)):
-                        if "right" in episode_tasks[i]:
-                            episode_tasks[i] = episode_tasks[i].replace(
-                                "right", "left"
-                            )
-                        elif "left" in episode_tasks[i]:
-                            episode_tasks[i] = episode_tasks[i].replace(
-                                "left", "right"
-                            )
                     #if episode_idx == 10:   
                     for i in range(len(episode_tasks)):
                         if "right" in episode_tasks[i]:
