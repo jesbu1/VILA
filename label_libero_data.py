@@ -43,6 +43,7 @@ CUDA_VISIBLE_DEVICES=0 python label_libero_data.py \
 import logging
 from pathlib import Path
 import tensorflow_datasets as tfds
+import torch
 import numpy as np
 import tqdm
 import tyro
