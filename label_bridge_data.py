@@ -95,6 +95,8 @@ def generate_paths_masks(args: CustomArgs) -> None: # Use CustomArgs here
     )
 
     device = next(model.parameters()).device
+
+    model = torch.compile(model)
     logging.info(
         f"Model loaded successfully on {device}. Context length: {context_len}"
     )
