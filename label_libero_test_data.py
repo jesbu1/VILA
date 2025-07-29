@@ -58,7 +58,7 @@ from llava.utils import disable_torch_init
 
 
 RAW_DATASET_NAMES = ["libero_10", "libero_object", "libero_goal", "libero_spatial"]
-MAX_EPISODES_PER_H5 = 1
+MAX_EPISODES_PER_H5 = 5
 
 def generate_paths_masks(args: Args) -> None:
     """Generate paths and masks for Libero data using direct VLM inference."""
