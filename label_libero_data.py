@@ -164,15 +164,15 @@ def generate_paths_masks(args: Args) -> None:
 
                 # Get paths and masks using direct VLM inference
                 try:
-                    #if episode_idx == 10:   
+                    # flip the language instructions because left is right and right is left in LIBERO.
+                    # VLM was trained on flipped language instructions to account for this.
                     for i in range(len(episode_tasks)):
                         if "right" in episode_tasks[i]:
                             episode_tasks[i] = episode_tasks[i].replace("right", "left")
                         elif "left" in episode_tasks[i]:
                             episode_tasks[i] = episode_tasks[i].replace("left", "right")
-                    # flip the images horizontally
+                    # flip the images back to how they were in VLM training because they are pre-flipped in the openvla dataset
                     episode_images = [np.fliplr(img) for img in episode_images]
-                    # for LIBERO we can just iterate over each episode image for the path history thing
 
                     # for history
                     #all_paths = []
