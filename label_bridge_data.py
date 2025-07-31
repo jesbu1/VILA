@@ -194,7 +194,8 @@ def generate_paths_masks(args: CustomArgs) -> None: # Use CustomArgs here
                 step_timesteps = []
                 step_cameras = []
 
-                for cam in ["image_0", "image_1", "image_2", "image_3"]:
+                #for cam in ["image_0", "image_1", "image_2", "image_3"]:
+                for cam in ["image_0"]:
                     if cam in step["observation"]:
                         img = step["observation"][cam]
                         if img is not None and not np.all(img == 0):
