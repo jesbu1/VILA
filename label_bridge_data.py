@@ -67,6 +67,7 @@ import tensorflow_datasets as tfds
 import numpy as np
 from dataclasses import dataclass
 import tqdm
+import torch
 import tyro
 import h5py
 from data_labeling_utils import Args, get_path_mask_from_vlm_direct
