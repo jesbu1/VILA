@@ -86,7 +86,9 @@ def generate_paths_masks(args: Args) -> None:
     # Create HDF5 file to store paths and masks
     for raw_dataset_name in RAW_DATASET_NAMES:
         # Load dataset builder
-        builder = tfds.builder(raw_dataset_name, data_dir=args.data_dir)
+        #builder = tfds.builder_from_directory(raw_dataset_name, data_dir=args.data_dir)
+        builder = tfds.builder_from_directory(f"{args.data_dir}/{raw_dataset_name}/0.1.0")
+
         # Define custom decoding behavior for the field that expects 256 x 320 for some reason when
         # it should be 256 x 256
         custom_decoder = {
