@@ -32,19 +32,20 @@ Usage example:
     CUDA_VISIBLE_DEVICES=0 python label_uw_widowx_data.py \
         --args.output-dir ./uw_widowx_labels_3b \
         --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_fast/snapshots/12df7a04221a50e88733cd2f1132eb01257aba0d/checkpoint-11700/ \
-        --args.vlm_call_frequency 5 \
+        --args.vlm_call_frequency 25 \
         --args.batch-size 8
 
 Notes:
 - The dataset does not include natural language instructions; we synthesize a generic
   per-frame instruction using `task_index` to keep the VLM prompt consistent.
+- MAKE SURE not installed/using torchcodec, as decoding lerobot dataset videos will fail since it depends on torchcodec which requires torch >=2.3, but this VILA hamster stuff uses torch==2.3.0.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import h5py
 import numpy as np
@@ -52,10 +53,11 @@ import torch
 import tqdm
 import tyro
 
-import av  # PyAV for decoding video frames
-from datasets import load_dataset
+from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
-from data_labeling_utils import Args, get_path_mask_from_vlm_direct
+from data_labeling_utils import get_path_mask_from_vlm_direct
+import dataclasses
+from typing import Optional
 
 from llava.mm_utils import get_model_name_from_path
 from llava.model.builder import load_pretrained_model
@@ -66,6 +68,26 @@ DATASET_NAME = "jesbu1/uw_widowx_8_8_lerobot"
 CAMERA_KEY = "images0"  # Matches feature name observation.images.images0
 
 
+@dataclasses.dataclass
+class Args:
+    output_dir: str  # Directory to save the generated paths and masks
+    model_path: str  # Path to the VLM model
+    draw_path: bool = True  # Whether to generate paths
+    draw_mask: bool = True  # Whether to generate masks
+    flip_image_horizontally: bool = False  # Whether to flip images horizontally
+    batch_size: int = 1  # Batch size for inference (1 for single, >1 for batched)
+    temperature: float = 0.1
+    top_p: Optional[float] = 0.95
+    max_new_tokens: int = 512
+    num_beams: int = 1
+    vlm_call_frequency: int = 50  # Save every N timesteps
+    load_8bit: bool = False
+    max_retries: int = 3  # Maximum retries for accessing frames
+    skip_problematic_frames: bool = (
+        True  # Whether to skip frames that can't be accessed
+    )
+
+
 def _format_task_description(task_index: int) -> str:
     return (
         f"Task {task_index}. Draw the end-effector trajectory as a path and the manipulated "
@@ -73,65 +95,12 @@ def _format_task_description(task_index: int) -> str:
     )
 
 
-def _collect_episode_indices(ds) -> Dict[int, List[int]]:
-    """Group dataset row indices by episode_index.
-
-    The dataset is small (~2.5k rows), so a single pass is fine.
-    """
-    episode_to_indices: Dict[int, List[int]] = {}
-    for i in range(len(ds)):
-        ep_idx = int(ds[i]["episode_index"])  # type: ignore[index]
-        episode_to_indices.setdefault(ep_idx, []).append(i)
-    # Ensure indices in each episode are ordered by frame_index
-    for ep_idx, idxs in episode_to_indices.items():
-        idxs.sort(key=lambda j: int(ds[j]["frame_index"]))
-    return episode_to_indices
-
-
-def _get_video_path(sample) -> str:
-    """Extract the local video path from a dataset sample's Video feature.
-
-    The `observation.images.images0` field is a Video feature that resolves to a mapping
-    containing a local `path` key once materialized by `datasets`.
-    """
-    vid_field = sample["observation"]["images"][CAMERA_KEY]
-    if isinstance(vid_field, dict) and "path" in vid_field:
-        return vid_field["path"]
-    if isinstance(vid_field, str):
-        return vid_field
-    raise ValueError("Unexpected video field structure; cannot locate video path")
-
-
-def _decode_selected_frames(
-    video_path: str, desired_frame_indices: List[int]
-) -> List[np.ndarray]:
-    """Decode selected frames from a video using PyAV.
-
-    Returns a list of HxWxC uint8 RGB arrays corresponding to the desired frame indices,
-    in ascending frame index order.
-    """
-    if not desired_frame_indices:
-        return []
-    desired_set = set(desired_frame_indices)
-    max_desired = max(desired_frame_indices)
-    images_by_index: Dict[int, np.ndarray] = {}
-
-    with av.open(video_path) as container:
-        video_stream = container.streams.video[0]
-        frame_idx = 0
-        for packet in container.demux(video_stream):
-            for frame in packet.decode():
-                if frame_idx in desired_set:
-                    img = frame.to_ndarray(format="rgb24")  # HxWx3, uint8
-                    images_by_index[frame_idx] = img
-                    if len(images_by_index) == len(desired_set):
-                        break
-                frame_idx += 1
-            if len(images_by_index) == len(desired_set) or frame_idx > max_desired:
-                break
-
-    # Return in the order of desired_frame_indices
-    return [images_by_index[i] for i in desired_frame_indices if i in images_by_index]
+def _get_instruction_for_frame(frame: Dict) -> str:
+    try:
+        task_index = int(frame.get("task_index", 0))
+    except Exception:
+        task_index = 0
+    return _format_task_description(task_index)
 
 
 def generate_paths_masks(args: Args) -> None:
@@ -154,9 +123,158 @@ def generate_paths_masks(args: Args) -> None:
     output_path = Path(args.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Load dataset from Hugging Face Hub
-    logging.info(f"Loading dataset: {DATASET_NAME}")
-    ds = load_dataset(DATASET_NAME, split="train")
+    # Load dataset via LeRobot
+    logging.info(f"Loading LeRobot dataset: {DATASET_NAME}")
+    lerobot_dataset = LeRobotDataset(DATASET_NAME)
+
+    # Test dataset accessibility
+    def test_dataset_access():
+        """Test if the dataset is accessible and identify potential issues."""
+        try:
+            logging.info("Testing dataset accessibility...")
+            logging.info(f"Dataset length: {len(lerobot_dataset)}")
+            logging.info(f"Number of episodes: {lerobot_dataset.num_episodes}")
+
+            # Try to access the first few frames to test
+            test_frames = min(5, len(lerobot_dataset))
+            for i in range(test_frames):
+                try:
+                    frame = lerobot_dataset[i]
+                    logging.info(f"Frame {i} accessible")
+                except Exception as e:
+                    logging.warning(f"Frame {i} not accessible: {e}")
+                    break
+
+        except Exception as e:
+            logging.error(f"Dataset accessibility test failed: {e}")
+            raise
+
+    def check_dataset_integrity():
+        """Check for potential dataset integrity issues."""
+        try:
+            logging.info("Checking dataset integrity...")
+
+            # Check if episode data index is accessible
+            if hasattr(lerobot_dataset, "episode_data_index"):
+                logging.info("Episode data index accessible")
+                logging.info(
+                    f"Episode data index keys: {list(lerobot_dataset.episode_data_index.keys())}"
+                )
+
+                # Check a few episode ranges
+                for i in range(min(3, lerobot_dataset.num_episodes)):
+                    try:
+                        from_idx = lerobot_dataset.episode_data_index["from"][i].item()
+                        to_idx = lerobot_dataset.episode_data_index["to"][i].item()
+                        logging.info(f"Episode {i}: frames {from_idx} to {to_idx}")
+                    except Exception as e:
+                        logging.warning(f"Episode {i} data index not accessible: {e}")
+            else:
+                logging.warning("Episode data index not accessible")
+
+            # Check if underlying HuggingFace dataset is accessible
+            if (
+                hasattr(lerobot_dataset, "hf_dataset")
+                and lerobot_dataset.hf_dataset is not None
+            ):
+                logging.info("Underlying HuggingFace dataset accessible")
+                try:
+                    logging.info(
+                        f"HF dataset length: {len(lerobot_dataset.hf_dataset)}"
+                    )
+                    logging.info(
+                        f"HF dataset features: {lerobot_dataset.hf_dataset.features}"
+                    )
+                except Exception as e:
+                    logging.warning(f"HF dataset info not accessible: {e}")
+            else:
+                logging.warning("Underlying HuggingFace dataset not accessible")
+
+        except Exception as e:
+            logging.error(f"Dataset integrity check failed: {e}")
+
+    # Run the tests
+    test_dataset_access()
+    check_dataset_integrity()
+
+    # Helper function to safely get frame data
+    def safe_get_frame(frame_idx: int, max_retries: int = None) -> Dict:
+        """Safely get frame data with retry logic and error handling."""
+        if max_retries is None:
+            max_retries = args.max_retries
+
+        for attempt in range(max_retries):
+            try:
+                # Try to access the frame directly
+                frame = lerobot_dataset[frame_idx]
+                return frame
+            except RecursionError as e:
+                logging.warning(
+                    f"Recursion error on frame {frame_idx}, attempt {attempt + 1}: {e}"
+                )
+                if attempt == max_retries - 1:
+                    # Try to access the underlying HuggingFace dataset directly as a last resort
+                    try:
+                        logging.info(
+                            f"Attempting to access HuggingFace dataset directly for frame {frame_idx}"
+                        )
+                        # Access the underlying dataset directly to bypass the recursion issue
+                        if (
+                            hasattr(lerobot_dataset, "hf_dataset")
+                            and lerobot_dataset.hf_dataset is not None
+                        ):
+                            # Try to get the raw data from the HuggingFace dataset
+                            raw_data = lerobot_dataset.hf_dataset[frame_idx]
+                            # Convert to the expected format if possible
+                            if isinstance(raw_data, dict):
+                                # Try to reconstruct the frame in the expected format
+                                frame = {}
+                                for key, value in raw_data.items():
+                                    if key.startswith("observation.images."):
+                                        frame[key] = value
+                                    elif key == "task_index":
+                                        frame[key] = value
+                                    # Add other necessary keys as needed
+                                if "observation.images." + CAMERA_KEY in frame:
+                                    return frame
+                        raise RuntimeError(
+                            f"Failed to access frame {frame_idx} after {max_retries} attempts due to recursion error"
+                        )
+                    except Exception as fallback_error:
+                        logging.error(
+                            f"Fallback access also failed for frame {frame_idx}: {fallback_error}"
+                        )
+                        if args.skip_problematic_frames:
+                            raise RuntimeError(
+                                f"Frame {frame_idx} is problematic and will be skipped"
+                            )
+                        else:
+                            raise RuntimeError(
+                                f"Failed to access frame {frame_idx} after {max_retries} attempts due to recursion error"
+                            )
+                # Wait a bit before retrying
+                import time
+
+                time.sleep(0.1)
+            except Exception as e:
+                logging.warning(
+                    f"Error accessing frame {frame_idx}, attempt {attempt + 1}: {e}"
+                )
+                if attempt == max_retries - 1:
+                    if args.skip_problematic_frames:
+                        raise RuntimeError(
+                            f"Frame {frame_idx} is problematic and will be skipped"
+                        )
+                    else:
+                        raise RuntimeError(
+                            f"Failed to access frame {frame_idx} after {max_retries} attempts: {e}"
+                        )
+                # Wait a bit before retrying
+                import time
+
+                time.sleep(0.1)
+
+        raise RuntimeError(f"Unexpected error: should not reach here")
 
     # Prepare HDF5
     h5_path = output_path / "uw_widowx_8_8_lerobot_paths_masks.h5"
@@ -168,176 +286,192 @@ def generate_paths_masks(args: Args) -> None:
         else:
             last_episode = already_saved_episodes[-1]
 
-        # Build mapping from episode_index to row indices
-        episode_to_indices = _collect_episode_indices(ds)
-
         for episode_idx in tqdm.tqdm(
-            sorted(episode_to_indices.keys()), desc="Processing episodes"
+            range(lerobot_dataset.num_episodes), desc="Processing episodes"
         ):
-            # Skip completed episodes, drop the last incomplete
-            if episode_idx < last_episode:
-                continue
-            elif episode_idx == last_episode:
-                logging.info(f"Deleting episode {episode_idx} as it is incomplete")
+            try:
+                # Skip completed episodes, drop the last incomplete
+                if episode_idx < last_episode:
+                    continue
+                elif episode_idx == last_episode:
+                    logging.info(f"Deleting episode {episode_idx} as it is incomplete")
+                    try:
+                        del f[f"episode_{episode_idx}"]
+                    except KeyError as e:
+                        logging.info(
+                            f"Episode {episode_idx} not found, skipping its deletion: {e}"
+                        )
+                        continue
+
+                # Determine frame range for this episode
+                from_idx = lerobot_dataset.episode_data_index["from"][
+                    episode_idx
+                ].item()
+                to_idx = lerobot_dataset.episode_data_index["to"][episode_idx].item()
+
+                # Collect sampled images/tasks for this episode
+                episode_images: List[np.ndarray] = []
+                episode_tasks: List[str] = []
+                episode_timesteps: List[int] = []
+                episode_cameras: List[str] = []
+
+                for i, frame_idx in enumerate(range(from_idx, to_idx)):
+                    if i % max(1, args.vlm_call_frequency) != 0:
+                        continue
+
+                    try:
+                        frame = safe_get_frame(frame_idx)
+                        task_description = _get_instruction_for_frame(frame)
+
+                        # Extract camera image from LeRobot sample: CxHxW float [0,1] -> HxWxC uint8
+                        img_tensor = frame[f"observation.images.{CAMERA_KEY}"]
+                        img = (img_tensor.permute(1, 2, 0).numpy() * 255).astype(
+                            np.uint8
+                        )
+
+                        episode_images.append(img)
+                        episode_tasks.append(task_description)
+                        episode_timesteps.append(i)
+                        episode_cameras.append(CAMERA_KEY)
+                    except Exception as e:
+                        logging.warning(
+                            f"Failed to process frame {frame_idx} in episode {episode_idx}: {e}"
+                        )
+                        # Continue with the next frame instead of crashing
+                        continue
+
+                if not episode_images:
+                    logging.warning(f"No selected frames for episode {episode_idx}")
+                    continue
+
+                # Create group for this episode
+                episode_group = f.create_group(f"episode_{episode_idx}")
+
+                # Save task description attribute (use first)
+                episode_group.attrs["task_description"] = (
+                    episode_tasks[0] if episode_tasks else ""
+                )
+
+                # VLM inference to get paths and masks
                 try:
-                    del f[f"episode_{episode_idx}"]
-                except KeyError as e:
-                    logging.info(
-                        f"Episode {episode_idx} not found, skipping its deletion: {e}"
+                    paths, masks = get_path_mask_from_vlm_direct(
+                        episode_images,
+                        episode_tasks,
+                        model,
+                        tokenizer,
+                        image_processor,
+                        args,
+                        device,
                     )
+
+                    # Save paths grouped by camera
+                    if args.draw_path and paths:
+                        camera_paths: Dict[str, List[np.ndarray]] = {}
+                        camera_path_timesteps: Dict[str, List[int]] = {}
+                        for path_arr, camera, timestep in zip(
+                            paths, episode_cameras, episode_timesteps
+                        ):
+                            camera_paths.setdefault(camera, []).append(path_arr)
+                            camera_path_timesteps.setdefault(camera, []).append(
+                                timestep
+                            )
+
+                        for camera, cam_paths in camera_paths.items():
+                            valid_paths = [
+                                p for p in cam_paths if p is not None and len(p) > 0
+                            ]
+                            if valid_paths:
+                                max_path_len = max(len(p) for p in valid_paths)
+                                padded_paths = np.zeros(
+                                    (len(cam_paths), max_path_len, 2)
+                                )
+                                path_lengths: List[int] = []
+                                for i, p in enumerate(cam_paths):
+                                    if p is not None and len(p) > 0:
+                                        padded_paths[i, : len(p)] = p
+                                        path_lengths.append(len(p))
+                                    else:
+                                        path_lengths.append(0)
+
+                                episode_group.create_dataset(
+                                    f"{camera}_paths", data=padded_paths
+                                )
+                                episode_group.create_dataset(
+                                    f"{camera}_path_lengths",
+                                    data=np.array(path_lengths),
+                                )
+                                episode_group.create_dataset(
+                                    f"{camera}_path_timesteps",
+                                    data=np.array(
+                                        camera_path_timesteps[camera], dtype=np.uint16
+                                    ),
+                                )
+
+                    # Save masks grouped by camera
+                    if args.draw_mask and masks:
+                        camera_masks: Dict[str, List[np.ndarray]] = {}
+                        camera_mask_timesteps: Dict[str, List[int]] = {}
+                        for mask_arr, camera, timestep in zip(
+                            masks, episode_cameras, episode_timesteps
+                        ):
+                            camera_masks.setdefault(camera, []).append(mask_arr)
+                            camera_mask_timesteps.setdefault(camera, []).append(
+                                timestep
+                            )
+
+                        for camera, cam_masks in camera_masks.items():
+                            valid_masks = [
+                                m for m in cam_masks if m is not None and len(m) > 0
+                            ]
+                            if valid_masks:
+                                max_mask_len = max(len(m) for m in valid_masks)
+                                padded_masks = np.zeros(
+                                    (len(cam_masks), max_mask_len, 2)
+                                )
+                                mask_lengths: List[int] = []
+                                for i, m in enumerate(cam_masks):
+                                    if m is not None and len(m) > 0:
+                                        padded_masks[i, : len(m)] = m
+                                        mask_lengths.append(len(m))
+                                    else:
+                                        mask_lengths.append(0)
+
+                                episode_group.create_dataset(
+                                    f"{camera}_masks", data=padded_masks
+                                )
+                                episode_group.create_dataset(
+                                    f"{camera}_mask_lengths",
+                                    data=np.array(mask_lengths),
+                                )
+                                episode_group.create_dataset(
+                                    f"{camera}_mask_timesteps",
+                                    data=np.array(
+                                        camera_mask_timesteps[camera], dtype=np.uint16
+                                    ),
+                                )
+
+                    # Metadata
+                    episode_group.attrs["num_steps"] = len(episode_images)
+                    episode_group.attrs["has_paths"] = bool(paths)
+                    episode_group.attrs["has_masks"] = bool(masks)
+                    episode_group.attrs["cameras_with_data"] = [
+                        camera.encode("utf-8")
+                        for camera in sorted(set(episode_cameras))
+                    ]
+                    episode_group.attrs["total_images"] = len(episode_images)
+
+                except Exception as e:
+                    logging.error(f"Error processing episode {episode_idx}: {e}")
+                    del f[f"episode_{episode_idx}"]
                     continue
-
-            row_indices = episode_to_indices[episode_idx]
-            if len(row_indices) == 0:
-                logging.warning(f"No rows found for episode {episode_idx}")
-                continue
-
-            # Sample frames by frequency and collect metadata
-            desired_rows: List[int] = []
-            desired_frame_indices: List[int] = []
-            task_descriptions: List[str] = []
-            for row_idx in row_indices:
-                row = ds[row_idx]
-                frame_index = int(row["frame_index"])  # type: ignore[index]
-                if frame_index % max(1, args.vlm_call_frequency) != 0:
-                    continue
-                desired_rows.append(row_idx)
-                desired_frame_indices.append(frame_index)
-                task_index = int(row["task_index"])  # type: ignore[index]
-                task_descriptions.append(_format_task_description(task_index))
-
-            if not desired_rows:
-                logging.warning(f"No selected frames for episode {episode_idx}")
-                continue
-
-            # Video path (assume same across episode)
-            sample0 = ds[desired_rows[0]]
-            try:
-                video_path = _get_video_path(sample0)
             except Exception as e:
-                logging.error(
-                    f"Failed to resolve video path for episode {episode_idx}: {e}"
-                )
-                continue
-
-            # Decode frames
-            episode_images = _decode_selected_frames(video_path, desired_frame_indices)
-            if not episode_images:
-                logging.warning(f"No frames decoded for episode {episode_idx}")
-                continue
-
-            # Camera/timestep tracking
-            episode_cameras = [CAMERA_KEY for _ in episode_images]
-            episode_timesteps = desired_frame_indices
-
-            # Create group for this episode
-            episode_group = f.create_group(f"episode_{episode_idx}")
-
-            # Save task description attribute (use first)
-            episode_group.attrs["task_description"] = (
-                task_descriptions[0] if task_descriptions else ""
-            )
-
-            # VLM inference to get paths and masks
-            try:
-                paths, masks = get_path_mask_from_vlm_direct(
-                    episode_images,
-                    task_descriptions,
-                    model,
-                    tokenizer,
-                    image_processor,
-                    args,
-                    device,
-                )
-
-                # Save paths grouped by camera
-                if args.draw_path and paths:
-                    camera_paths: Dict[str, List[np.ndarray]] = {}
-                    camera_path_timesteps: Dict[str, List[int]] = {}
-                    for path_arr, camera, timestep in zip(
-                        paths, episode_cameras, episode_timesteps
-                    ):
-                        camera_paths.setdefault(camera, []).append(path_arr)
-                        camera_path_timesteps.setdefault(camera, []).append(timestep)
-
-                    for camera, cam_paths in camera_paths.items():
-                        valid_paths = [
-                            p for p in cam_paths if p is not None and len(p) > 0
-                        ]
-                        if valid_paths:
-                            max_path_len = max(len(p) for p in valid_paths)
-                            padded_paths = np.zeros((len(cam_paths), max_path_len, 2))
-                            path_lengths: List[int] = []
-                            for i, p in enumerate(cam_paths):
-                                if p is not None and len(p) > 0:
-                                    padded_paths[i, : len(p)] = p
-                                    path_lengths.append(len(p))
-                                else:
-                                    path_lengths.append(0)
-
-                            episode_group.create_dataset(
-                                f"{camera}_paths", data=padded_paths
-                            )
-                            episode_group.create_dataset(
-                                f"{camera}_path_lengths", data=np.array(path_lengths)
-                            )
-                            episode_group.create_dataset(
-                                f"{camera}_path_timesteps",
-                                data=np.array(
-                                    camera_path_timesteps[camera], dtype=np.uint16
-                                ),
-                            )
-
-                # Save masks grouped by camera
-                if args.draw_mask and masks:
-                    camera_masks: Dict[str, List[np.ndarray]] = {}
-                    camera_mask_timesteps: Dict[str, List[int]] = {}
-                    for mask_arr, camera, timestep in zip(
-                        masks, episode_cameras, episode_timesteps
-                    ):
-                        camera_masks.setdefault(camera, []).append(mask_arr)
-                        camera_mask_timesteps.setdefault(camera, []).append(timestep)
-
-                    for camera, cam_masks in camera_masks.items():
-                        valid_masks = [
-                            m for m in cam_masks if m is not None and len(m) > 0
-                        ]
-                        if valid_masks:
-                            max_mask_len = max(len(m) for m in valid_masks)
-                            padded_masks = np.zeros((len(cam_masks), max_mask_len, 2))
-                            mask_lengths: List[int] = []
-                            for i, m in enumerate(cam_masks):
-                                if m is not None and len(m) > 0:
-                                    padded_masks[i, : len(m)] = m
-                                    mask_lengths.append(len(m))
-                                else:
-                                    mask_lengths.append(0)
-
-                            episode_group.create_dataset(
-                                f"{camera}_masks", data=padded_masks
-                            )
-                            episode_group.create_dataset(
-                                f"{camera}_mask_lengths", data=np.array(mask_lengths)
-                            )
-                            episode_group.create_dataset(
-                                f"{camera}_mask_timesteps",
-                                data=np.array(
-                                    camera_mask_timesteps[camera], dtype=np.uint16
-                                ),
-                            )
-
-                # Metadata
-                episode_group.attrs["num_steps"] = len(episode_images)
-                episode_group.attrs["has_paths"] = bool(paths)
-                episode_group.attrs["has_masks"] = bool(masks)
-                episode_group.attrs["cameras_with_data"] = [
-                    camera.encode("utf-8") for camera in sorted(set(episode_cameras))
-                ]
-                episode_group.attrs["total_images"] = len(episode_images)
-
-            except Exception as e:
-                logging.error(f"Error processing episode {episode_idx}: {e}")
-                del f[f"episode_{episode_idx}"]
+                logging.error(f"Critical error processing episode {episode_idx}: {e}")
+                # Try to clean up if the episode group was created
+                try:
+                    if f"episode_{episode_idx}" in f:
+                        del f[f"episode_{episode_idx}"]
+                except:
+                    pass
                 continue
 
     logging.info(f"Generated paths and masks saved to {h5_path}")
