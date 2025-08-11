@@ -124,7 +124,6 @@ def get_path_mask_from_vlm_direct(
         rgb_img = img
         pil_image = Image.fromarray(rgb_img.astype(np.uint8))
         pil_images.append(pil_image)
-
     # Batched inference processing
     batch_size = min(args.batch_size, len(images))
 

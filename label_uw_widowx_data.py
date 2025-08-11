@@ -32,7 +32,7 @@ Usage example:
     CUDA_VISIBLE_DEVICES=0 python label_uw_widowx_data.py \
         --args.output-dir ./uw_widowx_labels_3b \
         --args.model-path ~/.cache/huggingface/hub/models--memmelma--vila_3b_path_mask_fast/snapshots/12df7a04221a50e88733cd2f1132eb01257aba0d/checkpoint-11700/ \
-        --args.vlm_call_frequency 25 \
+        --args.vlm_call_frequency 50 \
         --args.batch-size 8
 
 Notes:
