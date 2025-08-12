@@ -64,7 +64,8 @@ from llava.model.builder import load_pretrained_model
 from llava.utils import disable_torch_init
 
 
-DATASET_NAME = "jesbu1/uw_widowx_8_8_lerobot"
+# DATASET_NAME = "jesbu1/uw_widowx_8_8_lerobot"
+DATASET_NAME = "jesbu1/uw_widowx_8_11_lerobot"
 CAMERA_KEY = "images0"  # Matches feature name observation.images.images0
 
 
@@ -277,7 +278,7 @@ def generate_paths_masks(args: Args) -> None:
         raise RuntimeError(f"Unexpected error: should not reach here")
 
     # Prepare HDF5
-    h5_path = output_path / "uw_widowx_8_8_lerobot_paths_masks.h5"
+    h5_path = output_path / "paths_masks.h5"
     with h5py.File(h5_path, "a") as f:
         # Resume logic: determine last saved episode
         already_saved_episodes = sorted([int(k.split("_")[-1]) for k in f.keys()])
