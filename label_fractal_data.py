@@ -334,12 +334,26 @@ def generate_paths_masks(args: Args) -> None:
                     ]
                     episode_group.attrs["total_images"] = len(episode_images)
 
+                    # Flush the file to ensure data is written to disk after each episode
+                    f.flush()
+                    logging.info(f"Episode {episode_idx} completed and flushed to disk")
+
                 except Exception as e:
                     logging.error(f"Error processing episode {episode_idx}: {e}")
-                    del f[f"episode_{episode_idx}"]
+                    # Ensure we delete the incomplete group if an error occurs
+                    if f"episode_{episode_idx}" in f:
+                        del f[f"episode_{episode_idx}"]
+                        f.flush()  # Flush after deletion to ensure cleanup is persisted
+                        logging.info(
+                            f"Incomplete episode {episode_idx} deleted and file flushed"
+                        )
                     continue
 
-        logging.info(f"Generated paths and masks saved to {h5_path}")
+        # Final flush before closing the file
+        f.flush()
+        logging.info(f"All episodes processed, final flush completed")
+
+    logging.info(f"Generated paths and masks saved to {h5_path}")
 
 
 if __name__ == "__main__":
