@@ -280,4 +280,4 @@ if __name__ == "__main__":
     parser.add_argument("--load-8bit", type=int, default=0)
     app.args = parser.parse_args()
 
-    uvicorn.run(app, host=host, port=port, workers=workers, log_level="debug")
+    uvicorn.run(app, host=app.args.host, port=app.args.port, workers=app.args.workers, log_level="debug")
